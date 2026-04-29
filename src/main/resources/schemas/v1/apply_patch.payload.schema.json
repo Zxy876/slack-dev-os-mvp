@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asyncaiflow.dev/schemas/v1/apply_patch.payload.schema.json",
+  "title": "apply_patch payload v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "patch"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "v1"
+    },
+    "repoPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "patch": {
+      "type": "string",
+      "minLength": 1
+    },
+    "strip": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 8
+    },
+    "cached": {
+      "type": "boolean"
+    },
+    "threeWay": {
+      "type": "boolean"
+    }
+  }
+}

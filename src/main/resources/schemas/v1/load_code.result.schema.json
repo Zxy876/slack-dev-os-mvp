@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asyncaiflow.dev/schemas/v1/load_code.result.schema.json",
+  "title": "load_code result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "worker",
+    "code",
+    "requestedPathCount",
+    "loadedFileCount",
+    "truncated",
+    "files"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "v1"
+    },
+    "worker": {
+      "type": "string",
+      "minLength": 1
+    },
+    "code": {
+      "type": "string"
+    },
+    "requestedPathCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "loadedFileCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "content",
+          "lineCount",
+          "truncated",
+          "fileSizeBytes"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content": {
+            "type": "string"
+          },
+          "lineCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "fileSizeBytes": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  }
+}

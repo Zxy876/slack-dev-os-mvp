@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asyncaiflow.dev/schemas/v1/generate_explanation.payload.schema.json",
+  "title": "generate_explanation payload v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "issue"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "v1"
+    },
+    "issue": {
+      "type": "string",
+      "minLength": 1
+    },
+    "repo_context": {
+      "type": "string"
+    },
+    "context": {
+      "type": "string"
+    },
+    "file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "module": {
+      "type": "string",
+      "minLength": 1
+    },
+    "gathered_context": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object"
+        },
+        {
+          "type": "array"
+        }
+      ]
+    }
+  }
+}

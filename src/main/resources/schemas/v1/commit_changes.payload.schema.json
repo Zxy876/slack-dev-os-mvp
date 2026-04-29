@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asyncaiflow.dev/schemas/v1/commit_changes.payload.schema.json",
+  "title": "commit_changes payload v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "message"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "v1"
+    },
+    "repoPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1
+    },
+    "all": {
+      "type": "boolean"
+    },
+    "allowEmpty": {
+      "type": "boolean"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "paths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

@@ -1,0 +1,41 @@
+# Build output
+target/
+
+# Environment / secrets
+.env
+*.env.local
+
+# Logs
+*.log
+logs/
+tmp/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+
+# Database
+*.sqlite
+*.db
+
+# Node
+node_modules/
+
+# Temporary scripts
+fix_test.py

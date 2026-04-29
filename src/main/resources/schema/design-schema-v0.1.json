@@ -1,0 +1,323 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://clothes-change.local/schema/design-schema-v0.1.json",
+  "title": "Design Schema v0.1",
+  "description": "Semantic DSL for garment design topology and physical parameters. No direct 3D geometry fields are allowed.",
+  "type": "object",
+  "required": [
+    "metadata",
+    "components",
+    "topology",
+    "constraints"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "designIntent",
+        "globalToleranceMm",
+        "units"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "0.1"
+        },
+        "designIntent": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 2000
+        },
+        "styleTags": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "targetGarmentType": {
+          "type": "string",
+          "enum": [
+            "tshirt",
+            "shirt",
+            "jacket",
+            "coat",
+            "dress",
+            "pants",
+            "skirt",
+            "other"
+          ]
+        },
+        "globalToleranceMm": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 50
+        },
+        "units": {
+          "type": "string",
+          "enum": [
+            "mm"
+          ]
+        }
+      }
+    },
+    "components": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "category",
+          "panelRole",
+          "material",
+          "stretchProfile",
+          "seamAllowanceMm"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_]{1,63}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "body",
+              "sleeve",
+              "collar",
+              "cuff",
+              "hem",
+              "placket",
+              "pocket",
+              "other"
+            ]
+          },
+          "panelRole": {
+            "type": "string",
+            "enum": [
+              "front",
+              "back",
+              "left",
+              "right",
+              "inner",
+              "outer",
+              "symmetric",
+              "other"
+            ]
+          },
+          "grainDirection": {
+            "type": "string",
+            "enum": [
+              "warp",
+              "weft",
+              "bias",
+              "mixed"
+            ]
+          },
+          "material": {
+            "type": "object",
+            "required": [
+              "textileType",
+              "blend",
+              "weightGsm",
+              "elasticRecoveryPct",
+              "shrinkagePct"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "textileType": {
+                "type": "string",
+                "enum": [
+                  "cotton",
+                  "polyester",
+                  "wool",
+                  "linen",
+                  "silk",
+                  "nylon",
+                  "blend",
+                  "other"
+                ]
+              },
+              "blend": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "weightGsm": {
+                "type": "number",
+                "minimum": 40,
+                "maximum": 800
+              },
+              "elasticRecoveryPct": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "shrinkagePct": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 20
+              },
+              "surfaceFinish": {
+                "type": "string",
+                "maxLength": 64
+              }
+            }
+          },
+          "stretchProfile": {
+            "type": "object",
+            "required": [
+              "warpStretchPct",
+              "weftStretchPct"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "warpStretchPct": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "weftStretchPct": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              }
+            }
+          },
+          "seamAllowanceMm": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 40
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 500
+          }
+        }
+      }
+    },
+    "topology": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "componentA",
+          "componentB",
+          "seamType",
+          "seamLengthMm"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_]{1,63}$"
+          },
+          "componentA": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_]{1,63}$"
+          },
+          "componentB": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_]{1,63}$"
+          },
+          "seamType": {
+            "type": "string",
+            "enum": [
+              "flat",
+              "overlock",
+              "bound",
+              "topstitch",
+              "invisible",
+              "other"
+            ]
+          },
+          "seamLengthMm": {
+            "type": "number",
+            "minimum": 1
+          },
+          "stitchDensitySpi": {
+            "type": "number",
+            "minimum": 2,
+            "maximum": 30
+          },
+          "threadType": {
+            "type": "string",
+            "maxLength": 64
+          }
+        }
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "required": [
+        "optimization",
+        "processLimits"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "optimization": {
+          "type": "object",
+          "required": [
+            "objective",
+            "targetUnitCost"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "objective": {
+              "type": "string",
+              "enum": [
+                "min_cost",
+                "min_waste",
+                "balanced"
+              ]
+            },
+            "targetUnitCost": {
+              "type": "number",
+              "minimum": 0
+            },
+            "maxFabricWastePct": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            }
+          }
+        },
+        "processLimits": {
+          "type": "object",
+          "required": [
+            "maxOperationCount",
+            "maxConstructionMinutes"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "maxOperationCount": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maxConstructionMinutes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "allowHandFinish": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    }
+  }
+}

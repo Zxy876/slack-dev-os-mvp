@@ -1,0 +1,27 @@
+spring:
+  application:
+    name: asyncaiflow-git-worker
+
+logging:
+  level:
+    com.asyncaiflow.worker: INFO
+
+asyncaiflow:
+  git-worker:
+    server-base-url: http://localhost:8080
+    worker-id: git-worker-1
+    capabilities:
+      - create_branch
+      - apply_patch
+      - commit_changes
+    poll-interval-millis: 2000
+    heartbeat-interval-millis: 10000
+    max-actions: 0
+    validation:
+      mode: warn
+      schema-base-path: schemas/v1
+    repository:
+      workspace-root: /Users/zxydediannao/AIWorkspace
+      max-patch-bytes: 262144
+      max-command-output-bytes: 65536
+      command-timeout-millis: 20000

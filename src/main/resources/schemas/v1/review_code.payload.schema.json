@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asyncaiflow.dev/schemas/v1/review_code.payload.schema.json",
+  "title": "review_code payload v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "v1"
+    },
+    "focus": {
+      "type": "string"
+    },
+    "context": {
+      "type": "string"
+    },
+    "diff": {
+      "type": "string",
+      "minLength": 1
+    },
+    "code": {
+      "type": "string",
+      "minLength": 1
+    },
+    "architectureRules": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "knownIssues": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "diff"
+      ]
+    },
+    {
+      "required": [
+        "code"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: asyncaiflow
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 100MB
+  datasource:
+    url: jdbc:mysql://localhost:3306/asyncaiflow?useSSL=false&serverTimezone=UTC
+    username: root
+    password: 
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      timeout: 3s
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+
+logging:
+  level:
+    com.asyncaiflow: INFO
+
+asyncaiflow:
+  queue:
+    lock-ttl-seconds: 300
+    heartbeat-ttl-seconds: 60
+  worker:
+    heartbeat-timeout-seconds: 90
+  action:
+    default-max-retry-count: 3
+    default-backoff-seconds: 5
+    default-execution-timeout-seconds: 300
+  dispatch:
+    capability-mapping:
+      analyze_module: read_file
+      devos_chat: devos_chat
+  scheduler:
+    action-scan-fixed-delay-ms: 2000
+    worker-scan-fixed-delay-ms: 10000
+    max-parallel-actions-per-workflow: 0

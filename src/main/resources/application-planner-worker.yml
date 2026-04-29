@@ -1,0 +1,17 @@
+spring:
+  application:
+    name: asyncaiflow-planner-worker
+
+logging:
+  level:
+    com.asyncaiflow.worker: INFO
+
+asyncaiflow:
+  planner-worker:
+    server-base-url: http://localhost:8080
+    worker-id: planner-worker-1
+    capabilities:
+      - plan_workflow
+    poll-interval-millis: 2000
+    heartbeat-interval-millis: 10000
+    max-actions: 0

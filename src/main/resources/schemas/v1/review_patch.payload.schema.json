@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asyncaiflow.dev/schemas/v1/review_patch.payload.schema.json",
+  "title": "review_patch payload v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "patch"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "v1"
+    },
+    "issue": {
+      "type": "string",
+      "minLength": 1
+    },
+    "file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "context": {
+      "type": "string"
+    },
+    "code": {
+      "type": "string"
+    },
+    "designSummary": {
+      "type": "string"
+    },
+    "patch": {
+      "type": "string",
+      "minLength": 1
+    },
+    "knownRisks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

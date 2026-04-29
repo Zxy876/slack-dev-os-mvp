@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asyncaiflow.dev/schemas/v1/create_branch.result.schema.json",
+  "title": "create_branch result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "worker",
+    "repoPath",
+    "branchName",
+    "fromRef",
+    "previousBranch",
+    "currentBranch",
+    "created",
+    "checkedOut"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "v1"
+    },
+    "worker": {
+      "type": "string",
+      "minLength": 1
+    },
+    "repoPath": {
+      "type": "string"
+    },
+    "branchName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "fromRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "previousBranch": {
+      "type": "string",
+      "minLength": 1
+    },
+    "currentBranch": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created": {
+      "type": "boolean"
+    },
+    "checkedOut": {
+      "type": "boolean"
+    }
+  }
+}

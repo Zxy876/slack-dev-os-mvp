@@ -1,0 +1,21 @@
+spring:
+  application:
+    name: asyncaiflow-test-worker
+
+logging:
+  level:
+    com.asyncaiflow.worker: INFO
+
+asyncaiflow:
+  reference-worker:
+    server-base-url: http://localhost:8080
+    worker-id: test-worker-1
+    capabilities:
+      - test_action
+    poll-interval-millis: 2000
+    heartbeat-interval-millis: 10000
+    max-actions: 0
+    test:
+      min-sleep-seconds: 1
+      max-sleep-seconds: 5
+      success-rate: 0.7

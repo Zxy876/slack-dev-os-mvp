@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asyncaiflow.dev/schemas/v1/create_branch.payload.schema.json",
+  "title": "create_branch payload v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "branchName"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "v1"
+    },
+    "repoPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "branchName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "fromRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "checkout": {
+      "type": "boolean"
+    },
+    "force": {
+      "type": "boolean"
+    }
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asyncaiflow.dev/schemas/v1/apply_patch.result.schema.json",
+  "title": "apply_patch result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "worker",
+    "repoPath",
+    "applied",
+    "cached",
+    "threeWay",
+    "changedFileCount",
+    "changedFiles",
+    "stagedFileCount",
+    "workingFileCount"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "v1"
+    },
+    "worker": {
+      "type": "string",
+      "minLength": 1
+    },
+    "repoPath": {
+      "type": "string"
+    },
+    "applied": {
+      "type": "boolean"
+    },
+    "cached": {
+      "type": "boolean"
+    },
+    "threeWay": {
+      "type": "boolean"
+    },
+    "changedFileCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "changedFiles": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "stagedFileCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "workingFileCount": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

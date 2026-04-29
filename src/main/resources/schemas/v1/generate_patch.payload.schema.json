@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asyncaiflow.dev/schemas/v1/generate_patch.payload.schema.json",
+  "title": "generate_patch payload v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "issue"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "v1"
+    },
+    "issue": {
+      "type": "string",
+      "minLength": 1
+    },
+    "file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "context": {
+      "type": "string"
+    },
+    "code": {
+      "type": "string",
+      "minLength": 1
+    },
+    "designSummary": {
+      "type": "string"
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "code"
+      ]
+    },
+    {
+      "required": [
+        "context"
+      ]
+    }
+  ]
+}

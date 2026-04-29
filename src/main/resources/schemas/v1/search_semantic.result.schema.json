@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asyncaiflow.dev/schemas/v1/search_semantic.result.schema.json",
+  "title": "search_semantic result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "worker",
+    "query",
+    "engine",
+    "matchCount",
+    "matches"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "v1"
+    },
+    "worker": {
+      "type": "string",
+      "minLength": 1
+    },
+    "query": {
+      "type": "string",
+      "minLength": 1
+    },
+    "engine": {
+      "type": "string",
+      "minLength": 1
+    },
+    "topK": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "matchCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "matches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "score",
+          "chunk"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "score": {
+            "type": "number"
+          },
+          "chunk": {
+            "type": "string"
+          },
+          "lineNumber": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

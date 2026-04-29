@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asyncaiflow.dev/schemas/v1/search_semantic.payload.schema.json",
+  "title": "search_semantic payload v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "query"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "v1"
+    },
+    "query": {
+      "type": "string",
+      "minLength": 1
+    },
+    "issue": {
+      "type": "string",
+      "minLength": 1
+    },
+    "topK": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repoPath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "paths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

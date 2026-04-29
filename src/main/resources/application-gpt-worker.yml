@@ -1,0 +1,34 @@
+spring:
+  application:
+    name: asyncaiflow-gpt-worker
+
+logging:
+  level:
+    com.asyncaiflow.worker: INFO
+
+asyncaiflow:
+  gpt-worker:
+    server-base-url: http://localhost:8080
+    worker-id: gpt-worker-1
+    capabilities:
+      - design_solution
+      - review_code
+      - generate_explanation
+      - generate_patch
+      - review_patch
+    poll-interval-millis: 2000
+    heartbeat-interval-millis: 10000
+    max-actions: 0
+    validation:
+      mode: warn
+      schema-base-path: schemas/v1
+    llm:
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+      endpoint: ${OPENAI_ENDPOINT:/v1/chat/completions}
+      api-key: ${OPENAI_API_KEY:}
+      model: ${OPENAI_MODEL:gpt-4.1-mini}
+      temperature: 0.2
+      max-output-tokens: 1200
+      connect-timeout-millis: 5000
+      read-timeout-millis: 60000
+      mock-fallback-enabled: true

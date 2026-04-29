@@ -1,0 +1,49 @@
+spring:
+  application:
+    name: asyncaiflow-repository-worker
+
+logging:
+  level:
+    com.asyncaiflow.worker: INFO
+
+asyncaiflow:
+  repository-worker:
+    server-base-url: http://localhost:8080
+    worker-id: repository-worker-1
+    capabilities:
+      - search_code
+      - read_file
+      - load_code
+      - search_semantic
+      - build_context_pack
+    poll-interval-millis: 2000
+    heartbeat-interval-millis: 10000
+    max-actions: 0
+    validation:
+      mode: warn
+      schema-base-path: schemas/v1
+    repository:
+      workspace-root: /Users/zxydediannao/AIWorkspace
+      max-search-results: 40
+      max-read-bytes: 65536
+      ignored-directories:
+        - .git
+        - .idea
+        - .aiflow
+        - target
+        - build
+        - node_modules
+    semantic:
+      default-top-k: 5
+      max-context-files: 3
+      max-chars-per-file: 4000
+      zread:
+        enabled: ${ASYNCAIFLOW_ZREAD_ENABLED:true}
+        endpoint: ${ASYNCAIFLOW_ZREAD_MCP_ENDPOINT:https://open.bigmodel.cn/api/mcp/zread/mcp}
+        authorization: ${ASYNCAIFLOW_ZREAD_AUTHORIZATION:${OPENAI_API_KEY:}}
+        timeout-millis: 15000
+        tool-names:
+          - search_repo_semantic
+          - search_semantic
+          - semantic_search
+          - search

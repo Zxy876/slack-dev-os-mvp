@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asyncaiflow.dev/schemas/v1/build_context_pack.payload.schema.json",
+  "title": "build_context_pack payload v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "issue"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "v1"
+    },
+    "issue": {
+      "type": "string",
+      "minLength": 1
+    },
+    "query": {
+      "type": "string",
+      "minLength": 1
+    },
+    "repo_context": {
+      "type": "string"
+    },
+    "topK": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50
+    },
+    "maxFiles": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20
+    },
+    "maxCharsPerFile": {
+      "type": "integer",
+      "minimum": 200,
+      "maximum": 20000
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repoPath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "paths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "retrievalResults": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "score": {
+            "type": "number"
+          },
+          "chunk": {
+            "type": "string"
+          },
+          "lineNumber": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,137 @@
+{
+  "issues": [
+    {
+      "issue": "Explain how Drift story engine interacts with the Minecraft plugin",
+      "classification": "understanding",
+      "repoContext": "DriftSystem backend story routes and Minecraft plugin integration",
+      "file": "backend/app/routers/story.py",
+      "expectedPlanTypes": ["search_semantic", "build_context_pack", "generate_explanation"]
+    },
+    {
+      "issue": "Explain rule-event pipeline",
+      "classification": "understanding",
+      "repoContext": "DriftSystem plugin scene bridge and listener pipeline",
+      "file": "system/mc_plugin/src/main/java/com/driftmc/scene/RuleEventBridge.java",
+      "expectedPlanTypes": ["search_semantic", "build_context_pack", "generate_explanation"]
+    },
+    {
+      "issue": "Trace the full flow of rule-event from Minecraft plugin to backend",
+      "classification": "understanding",
+      "repoContext": "DriftSystem system/mc_plugin scene flow and backend routers",
+      "file": "system/mc_plugin/src/main/java/com/driftmc/scene/RuleEventBridge.java",
+      "expectedPlanTypes": ["search_semantic", "build_context_pack", "generate_explanation"]
+    },
+    {
+      "issue": "Explain how TutorialManager triggers scene generation",
+      "classification": "understanding",
+      "repoContext": "DriftSystem TutorialManager and scene integration",
+      "file": "system/mc_plugin/src/main/java/com/driftmc/tutorial/TutorialManager.java",
+      "expectedPlanTypes": ["search_semantic", "build_context_pack", "generate_explanation"]
+    },
+    {
+      "issue": "Explain how SceneAwareWorldPatchExecutor builds world patches",
+      "classification": "understanding",
+      "repoContext": "DriftSystem plugin scene and world patch subsystem",
+      "file": "system/mc_plugin/src/main/java/com/driftmc/scene/SceneAwareWorldPatchExecutor.java",
+      "expectedPlanTypes": ["search_semantic", "build_context_pack", "generate_explanation"]
+    },
+    {
+      "issue": "Understand Heart Levels data loading pipeline",
+      "classification": "understanding",
+      "repoContext": "DriftSystem backend story routes and Heart Levels data loading",
+      "file": "backend/app/routers/story.py",
+      "expectedPlanTypes": ["search_semantic", "build_context_pack", "generate_explanation"]
+    },
+    {
+      "issue": "Explain how IntentRouter2 and IntentDispatcher2 interact",
+      "classification": "understanding",
+      "repoContext": "DriftSystem Minecraft plugin intent routing and dispatch",
+      "file": "system/mc_plugin/src/main/java/com/driftmc/intent2/IntentRouter2.java",
+      "expectedPlanTypes": ["search_semantic", "build_context_pack", "generate_explanation"]
+    },
+    {
+      "issue": "Review rule-event handling",
+      "classification": "review",
+      "repoContext": "DriftSystem scene rule bridge and listeners",
+      "file": "system/mc_plugin/src/main/java/com/driftmc/scene/RuleEventBridge.java",
+      "expectedPlanTypes": ["search_semantic", "load_code", "build_context_pack", "review_code"]
+    },
+    {
+      "issue": "Review scene generation logic",
+      "classification": "review",
+      "repoContext": "DriftSystem scene generation and world patch execution",
+      "file": "system/mc_plugin/src/main/java/com/driftmc/scene/SceneAwareWorldPatchExecutor.java",
+      "expectedPlanTypes": ["search_semantic", "load_code", "build_context_pack", "review_code"]
+    },
+    {
+      "issue": "Review TutorialManager onboarding flow",
+      "classification": "review",
+      "repoContext": "DriftSystem tutorial onboarding and scene trigger flow",
+      "file": "system/mc_plugin/src/main/java/com/driftmc/tutorial/TutorialManager.java",
+      "expectedPlanTypes": ["search_semantic", "load_code", "build_context_pack", "review_code"]
+    },
+    {
+      "issue": "Audit world patch executor safety",
+      "classification": "review",
+      "repoContext": "DriftSystem world patch execution behavior and plugin boundaries",
+      "file": "system/mc_plugin/src/main/java/com/driftmc/scene/SceneAwareWorldPatchExecutor.java",
+      "expectedPlanTypes": ["search_semantic", "load_code", "build_context_pack", "review_code"]
+    },
+    {
+      "issue": "Review resource mapping contract",
+      "classification": "review",
+      "repoContext": "DriftSystem backend mapping subsystem",
+      "file": "backend/app/core/mapping/v2_mapper.py",
+      "expectedPlanTypes": ["search_semantic", "load_code", "build_context_pack", "review_code"]
+    },
+    {
+      "issue": "Audit Minecraft plugin integration boundaries",
+      "classification": "review",
+      "repoContext": "DriftSystem plugin to backend integration boundary",
+      "file": "system/mc_plugin/src/main/java/com/driftmc/DriftPlugin.java",
+      "expectedPlanTypes": ["search_semantic", "load_code", "build_context_pack", "review_code"]
+    },
+    {
+      "issue": "Find bug in resource mapping",
+      "classification": "diagnosis",
+      "repoContext": "DriftSystem backend app core mapping subsystem",
+      "file": "backend/app/core/mapping/v2_mapper.py",
+      "expectedPlanTypes": ["search_semantic", "load_code", "build_context_pack", "design_solution", "generate_patch", "review_patch", "apply_patch", "commit_changes"]
+    },
+    {
+      "issue": "Why might resource mapping fail in v2_mapper.py",
+      "classification": "diagnosis",
+      "repoContext": "DriftSystem backend app core mapping subsystem",
+      "file": "backend/app/core/mapping/v2_mapper.py",
+      "expectedPlanTypes": ["search_semantic", "load_code", "build_context_pack", "design_solution", "generate_patch", "review_patch", "apply_patch", "commit_changes"]
+    },
+    {
+      "issue": "Fix scene generation bug",
+      "classification": "diagnosis",
+      "repoContext": "DriftSystem scene generation and world patch execution",
+      "file": "system/mc_plugin/src/main/java/com/driftmc/scene/SceneAwareWorldPatchExecutor.java",
+      "expectedPlanTypes": ["search_semantic", "load_code", "build_context_pack", "design_solution", "generate_patch", "review_patch", "apply_patch", "commit_changes"]
+    },
+    {
+      "issue": "Debug NPC scene transition failure",
+      "classification": "diagnosis",
+      "repoContext": "DriftSystem NPC behavior and scene transition flow",
+      "file": "system/mc_plugin/src/main/java/com/driftmc/listeners/NearbyNPCListener.java",
+      "expectedPlanTypes": ["search_semantic", "load_code", "build_context_pack", "design_solution", "generate_patch", "review_patch", "apply_patch", "commit_changes"]
+    },
+    {
+      "issue": "Find root cause of tutorial scene trigger bug",
+      "classification": "diagnosis",
+      "repoContext": "DriftSystem tutorial manager and scene trigger integration",
+      "file": "system/mc_plugin/src/main/java/com/driftmc/tutorial/TutorialManager.java",
+      "expectedPlanTypes": ["search_semantic", "load_code", "build_context_pack", "design_solution", "generate_patch", "review_patch", "apply_patch", "commit_changes"]
+    },
+    {
+      "issue": "Fix semantic resource extraction error",
+      "classification": "diagnosis",
+      "repoContext": "DriftSystem backend mapping and hint extraction logic",
+      "file": "backend/app/core/mapping/v2_mapper.py",
+      "expectedPlanTypes": ["search_semantic", "load_code", "build_context_pack", "design_solution", "generate_patch", "review_patch", "apply_patch", "commit_changes"]
+    }
+  ]
+}

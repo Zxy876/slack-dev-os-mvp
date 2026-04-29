@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "summary",
+    "mustHaveFieldForTest"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "v1"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mustHaveFieldForTest": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

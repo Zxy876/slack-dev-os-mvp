@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asyncaiflow.dev/schemas/v1/commit_changes.result.schema.json",
+  "title": "commit_changes result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "worker",
+    "repoPath",
+    "branch",
+    "commitHash",
+    "message",
+    "stagedFileCount",
+    "stagedFiles",
+    "summary"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "v1"
+    },
+    "worker": {
+      "type": "string",
+      "minLength": 1
+    },
+    "repoPath": {
+      "type": "string"
+    },
+    "branch": {
+      "type": "string",
+      "minLength": 1
+    },
+    "commitHash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stagedFileCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "stagedFiles": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "summary": {
+      "type": "string"
+    }
+  }
+}
