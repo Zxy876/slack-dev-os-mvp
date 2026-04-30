@@ -1,0 +1,49 @@
+# BACKLOG — Slack Dev OS MVP
+
+> 追踪所有 **AUTOPILOT_SOURCE_INDEX.md** 中标注为 ⏳ DEFERRED 或需后续迭代的工程任务。
+>
+> **格式**：`B-NNN | 来源 ID | 阶段 | 标题 | 说明`
+
+---
+
+## 活跃积压
+
+| 编号  | 来源 ID | 阶段    | 标题                            | 说明                                                                        | 优先级 |
+|-------|---------|---------|-------------------------------|-----------------------------------------------------------------------------|--------|
+| B-001 | 7, 18   | Stage 2 | Context Restore 隔离集成测试   | 验证：同 slackThreadId 的 Action N 能拿到 N-1 的 notepad；不同 Thread 不互污 | P1     |
+| B-002 | 9       | Stage 3 | Watchdog E2E 场景测试          | 用 `SchedulerReliabilityIntegrationTest` 框架，验证 lease 超时 → RETRY_WAIT → 重跑 | P2     |
+| B-003 | 10      | Stage 3 | 用户中断信号（Interrupt Signal）| 设计并实现 `POST /devos/interrupt`：将 RUNNING Action 标记为 FAILED，触发 Interrupt Handler | P2     |
+| B-004 | 11      | Stage 3 | DAG 环检测                     | `validateUpstreamActions()` 应检测有向环（A→B→A）并返回 400                  | P2     |
+| B-005 | 12      | Stage 4 | Page Fault / 仓库文件检索      | 实现 `repo_retrieval_worker`：接收文件路径，返回内容摘要注入 notepad          | P3     |
+| B-006 | 13      | Stage 5 | Redis SETNX Worker 互斥锁      | `ActionQueueService.pollAction()` 使用 SETNX 防止双 Worker 竞争同一 Action   | P3     |
+| B-007 | 14      | Stage 6 | 访问控制 / 权限隔离             | Workflow 粒度 RBAC；slackThreadId 绑定用户 scope                              | P4     |
+| B-008 | 15      | Stage 6 | 工具管理器（Tool Manager）      | Worker 能力注册中心：动态加载 / 卸载 capability；工具调用结果回写 notepad     | P4     |
+| B-009 | 8       | Stage 4 | 多层检索器（RAG）               | 实现向量检索 Worker；notepad 中附加检索结果                                   | P3     |
+| B-010 | 0       | Stage 6 | 真实 Slack Token + LLM Key     | 生产环境接入：Slack Event API + OpenAI/GLM 真实 key；消除 DEMO_MODE 依赖     | P4     |
+| B-011 | 17      | Stage 6 | 多模型异构调度                  | Worker 声明 `model_capability`；调度器按任务类型路由到不同 LLM 后端            | P4     |
+| B-012 | 10      | Stage 3 | 中断作为异步信号                | 中断信号走 Redis PubSub；Worker 轮询期间收到信号则提前退出并提交 FAILED 状态  | P3     |
+
+---
+
+## 已完成（参考）
+
+| 编号  | 标题                              | 完成于          |
+|-------|-----------------------------------|-----------------|
+| —     | Stage 0: MVP Kernel（84 tests）   | commit `6e5bb8c` (local) |
+| —     | Stage 1: CI proof（ci.yml + e2e） | commit `6e5bb8c` |
+| —     | PCB 完整字段集（21 字段）         | schema-h2.sql   |
+| —     | 7 状态机 + isValidTransition      | ActionService.java |
+| —     | BLOCKED→QUEUED DAG 解锁           | unblockDownstreamActions() |
+| —     | notepad_ref 持久化 + 下发 Worker  | extractNotepadFromResult() |
+
+---
+
+## 里程碑映射
+
+```
+Stage 2 (Context Restore):  B-001
+Stage 3 (Fault Tolerance):  B-002, B-003, B-004, B-012
+Stage 4 (Memory/Retrieval): B-005, B-009
+Stage 5 (Concurrency):      B-006
+Stage 6 (Production):       B-007, B-008, B-010, B-011
+```
