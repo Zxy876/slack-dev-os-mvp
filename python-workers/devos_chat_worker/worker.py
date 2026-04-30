@@ -187,11 +187,15 @@ def heartbeat() -> None:
 
 def poll_action() -> Optional[dict]:
     """从 AsyncAIFlow 拉取一个 devos_chat action（PCB 认领）。"""
-    resp = _aiflow_session.get(
-        f"{ASYNCAIFLOW_URL}/action/poll",
-        params={"workerId": WORKER_ID},
-        timeout=10,
-    )
+    try:
+        resp = _aiflow_session.get(
+            f"{ASYNCAIFLOW_URL}/action/poll",
+            params={"workerId": WORKER_ID},
+            timeout=10,
+        )
+    except Exception as exc:
+        LOGGER.warning("poll_action network error (will retry): %s", exc)
+        return None
     if resp.status_code == 204 or not resp.text.strip():
         return None
     resp.raise_for_status()
