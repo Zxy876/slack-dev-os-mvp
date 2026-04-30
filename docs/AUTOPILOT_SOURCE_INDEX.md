@@ -23,7 +23,7 @@
 | 9   | ARC     | Watchdog 超时回收                | ✅ DONE    | `ActionService.reclaimExpiredLeases()` + `DevOsWatchdogLeaseTest` (3 tests: RETRY_WAIT, DEAD_LETTER, enqueueDueRetries) | B-002 ✓ |
 | 10  | Q26     | 用户中断信号（Interrupt Signal） | ✅ DONE | `DevOsController.POST /devos/interrupt` → `DevOsService.interrupt()` → `ActionService.interruptAction()`; `isValidTransition` 扩展支持 QUEUED/RETRY_WAIT/BLOCKED → FAILED; `DevOsInterruptTest` (4 tests: RUNNING, QUEUED, RETRY_WAIT, terminal guard) | B-003 ✓ |
 | 11  | MODEL   | DAG 依赖 / 上游 ID               | ✅ DONE | `action_dependency` 表 + `validateUpstreamActions()` + `ActionService.wouldCreateCycle()` BFS; `DevOsDagCycleTest` (4 tests) | B-004 ✓ |
-| 12  | Q26     | Page Fault / 仓库检索            | ⏳ DEFERRED | — | Stage 4 → B-005                  |
+| 12  | Q26     | Page Fault / 仓库检索            | ✅ DONE | `DevOsStartRequest.repoPath/filePath` 透传 payload；`worker.py safe_read_repo_file()`：安全校验 + 读取；DEMO_MODE [PAGE_IN] marker；`DevOsPageFaultRequestTest`（2 tests）；Page Fault E2E PASSED | B-005 ✓ |
 | 13  | MODEL   | Redis SETNX 互斥锁               | ⏳ DEFERRED | — | Stage 5 → B-006                  |
 | 14  | Q26     | 访问控制 / 权限隔离              | ⏳ DEFERRED | — | Stage 6 → B-007                  |
 | 15  | Q26     | 工具管理器（Tool Manager）       | ⏳ DEFERRED | — | Stage 6 → B-008                  |

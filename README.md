@@ -57,7 +57,7 @@ POST /devos/start
 - **Stage 3: Watchdog / Lease / Retry** — lease expiry reclaim, RETRY_WAIT backoff, DEAD_LETTER doom-loop prevention
 - **Stage 3: DAG Acyclicity** — BFS cycle detection rejects directed cycles in action dependency graph
 - **Stage 3: User Interrupt** — `POST /devos/interrupt` transitions any active Action to FAILED; terminal actions protected
-- Full test suite passing: **98 tests, 0 failures, BUILD SUCCESS**
+- Full test suite passing: **100 tests, 0 failures, BUILD SUCCESS**
 
 ## Architecture Overview
 
@@ -125,7 +125,7 @@ curl -X POST http://localhost:8080/devos/start \
 mvn test
 ```
 
-**Verified result: 98 tests, 0 failures, BUILD SUCCESS**
+**Verified result: 100 tests, 0 failures, BUILD SUCCESS**
 
 The test suite runs entirely with H2 in-memory — no MySQL or Redis needed for tests.
 
@@ -155,11 +155,15 @@ LLM priority: `DEMO_MODE=true` (stub, highest) > `GLM_API_KEY` > `OPENAI_API_KEY
 {
   "text": "user message text",
   "slackThreadId": "C08XXXXXX/1234567890.123456",
-  "prevActionId": 42
+  "prevActionId": 42,
+  "repoPath": "/path/to/local/repo",
+  "filePath": "src/main/README.md"
 }
 ```
 
 > `prevActionId` is optional. When provided, the new Action inherits the notepad_ref from the referenced Action (Stage 2 Context Restore).
+>
+> `repoPath` + `filePath` are optional. When both are provided, the worker performs a **Page Fault** (Stage 4): reads the file safely and injects `[PAGE_IN]` content into the LLM response and `[page-in:filePath]` into the notepad.
 
 **Response:**
 ```json
@@ -280,8 +284,8 @@ See [docs/SCENARIO_MATRIX.md](docs/SCENARIO_MATRIX.md) for the full 7-stage kern
 - **Stage 0** (✅ Complete): Syscall, PCB, capability dispatch, worker, DEMO stub, notepad, local E2E
 - **Stage 1** (✅ Complete): GitHub Actions CI proof (mvn test + DEMO E2E)
 - **Stage 2** (✅ Complete): Context restore — prevActionId, notepad propagation, isolation (3 tests)
-- **Stage 3** (✅ Partial): Fault tolerance — Watchdog/Lease/Retry (B-002, 3 tests) + DAG acyclicity proof (B-004, 4 tests: `wouldCreateCycle` BFS, linear chain unlock, direct/indirect cycle detection)
-- **Stage 4** (Planned): Disk/page fault simulation — repo file search worker
+- **Stage 3** (✅ Complete): Fault tolerance — Watchdog/Lease/Retry (B-002, 3 tests) + User Interrupt B-003 (4 tests) + DAG acyclicity B-004 (4 tests: `wouldCreateCycle` BFS, linear chain unlock, direct/indirect cycle detection)
+- **Stage 4** (✅ Complete): Disk/Page Fault — `repoPath`+`filePath` payload 透传，`safe_read_repo_file` 安全校验，[PAGE_IN] marker 注入，[page-in] notepad 记录；2 集成测试 + Page Fault E2E PASSED
 - **Stage 5** (Planned): Single-writer mutex — Git branch + Redis SETNX
 - **Stage 6** (Planned): Real Slack slash command + LLM keys
 

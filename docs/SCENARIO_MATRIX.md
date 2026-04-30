@@ -16,7 +16,7 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 | Context restore on retry | notepad_ref injection into LLM system prompt | ✅ Stage 0 |
 | Context switch (CI proof) | GitHub Actions E2E workflow | ✅ Stage 1 |
 | Fault tolerance / watchdog | lease expiry, RETRY_WAIT, DEAD_LETTER | ⏳ Stage 3 |
-| Page fault / disk access | Repo file search worker tool | ⏳ Stage 4 |
+| Page fault / disk access | Repo file search worker tool | ✅ Stage 4 |
 | Single-writer mutex | Git branch workspace_snapshot + Redis SETNX | ⏳ Stage 5 |
 | Real syscall (Slack + LLM) | Slack slash command + chat.postMessage | ⏳ Stage 6 |
 
@@ -207,6 +207,46 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 | `POST /devos/start` with intent requiring file lookup | Planner creates `read_file` or `search_code` action |
 | Repository worker executes | Target file content retrieved |
 | Result returned to devos_chat worker | LLM includes file context in response |
+
+---
+
+## Stage 4 — Page Fault / Repository File Retrieval (COMPLETED)
+
+**Goal**: Prove the minimal Disk / Page Fault capability: worker reads a repo file and injects content as page-in context.
+
+**Validation**: ✅ 100 tests, 0 failures, BUILD SUCCESS. Page Fault E2E PASSED. B-005 complete.
+
+### Scenario 4.1 — Page Fault payload 传递 ✅
+
+| Aspect | Invariant | Validation |
+|---|---|---|
+| `repoPath` + `filePath` written to Action payload | `payload` JSON contains `repo_path` and `file_path` | `testPayloadContainsRepoPathAndFilePath` ✅ |
+| Requests without repoPath/filePath unaffected | `payload` does NOT contain `repo_path` or `file_path` | `testPayloadWithoutRepoPathHasNoRepoFields` ✅ |
+
+**Implementation**: `DevOsStartRequest` extended with `repoPath` + `filePath` optional fields. `DevOsService.buildPayload()` writes them to JSON payload when non-blank.
+
+### Scenario 4.2 — safe_read_repo_file security invariants ✅
+
+| Security Check | Input | Expected |
+|---|---|---|
+| Absolute file_path rejected | `file_path="/etc/passwd"` | `{ok:false, error:"file_path must be relative"}` |
+| Path traversal rejected | `file_path="../../etc/passwd"` | `{ok:false, error:"must not contain '..'"}` |
+| Symlink escape prevented | Resolved path outside repo_path | `{ok:false, error:"escapes repo boundary"}` |
+| Non-existent file | `file_path="missing.txt"` | `{ok:false, error:"not a regular file"}` |
+| Valid file read | `file_path="README.md"` in fixture repo | `{ok:true, content:"# DevOS..."}` |
+
+**Implementation**: `worker.py safe_read_repo_file(repo_path, file_path, max_bytes=32768)`: 4-step security validation chain before file open.
+
+### Scenario 4.3 — Worker Page-In Response ✅
+
+| Scenario | Input | Expected Outcome |
+|---|---|---|
+| DEMO_MODE + valid repoPath+filePath | `repo_path=/tmp/devos-fixture-repo, file_path=README.md` | response contains `[PAGE_IN] Loaded file: README.md` |
+| DEMO_MODE + valid repoPath+filePath | same | notepad contains `[page-in:README.md] loaded from ...` |
+| DEMO_MODE without repoPath/filePath | normal request | response contains `[DEMO]`, no `[PAGE_IN]` — backward compatible |
+| File not found | non-existent file | response contains `[PAGE_IN: FILE NOT FOUND]` |
+
+**Implementation**: `call_llm(user_text, notepad, payload=None)` — DEMO_MODE checks `payload.get("repo_path")` and `payload.get("file_path")`; calls `safe_read_repo_file`; injects `[PAGE_IN]` excerpt. `execute()` builds `[page-in:filePath]` notepad entry.
 
 ---
 

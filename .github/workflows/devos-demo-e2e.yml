@@ -255,3 +255,104 @@ jobs:
           echo ""
           echo "=== worker.log ==="
           cat worker.log || echo "(no worker.log)"
+
+      # ── Stage 4: Page Fault / Repository File Retrieval (B-005) ──────────
+
+      - name: Create fixture repo for Page Fault test
+        run: |
+          mkdir -p /tmp/devos-fixture-repo
+          cat > /tmp/devos-fixture-repo/README.md << 'EOF'
+          # DevOS Fixture Repository
+          This is a test fixture for Slack Dev OS B-005 Page Fault proof.
+          Validates that the devos_chat worker can safely read a file from a local
+          Git repository path and inject its content into the response.
+          EOF
+          echo "Fixture created at /tmp/devos-fixture-repo/README.md"
+
+      - name: POST /devos/start — Round 3 (Page Fault, repoPath + filePath)
+        id: start3
+        run: |
+          RESPONSE3=$(curl -s -X POST http://localhost:8080/devos/start \
+            -H "Content-Type: application/json" \
+            -d '{"text":"Explain this file","slackThreadId":"CDEMO/1714500000.999999","repoPath":"/tmp/devos-fixture-repo","filePath":"README.md"}')
+          echo "POST /devos/start Round 3 response: $RESPONSE3"
+          ACTION_ID3=$(echo "$RESPONSE3" | jq -r '.data.actionId')
+          if [ -z "$ACTION_ID3" ] || [ "$ACTION_ID3" = "null" ]; then
+            echo "FAIL: could not extract actionId from Round 3 response"
+            exit 1
+          fi
+          echo "action_id3=$ACTION_ID3" >> "$GITHUB_OUTPUT"
+          echo "Action ID3: $ACTION_ID3"
+
+      - name: Poll GET /action/{id3} until COMPLETED — Round 3 Page Fault (max 120s)
+        run: |
+          ACTION_ID=${{ steps.start3.outputs.action_id3 }}
+          for i in $(seq 1 60); do
+            RESULT=$(curl -s "http://localhost:8080/action/${ACTION_ID}")
+            STATUS=$(echo "$RESULT" | jq -r '.data.status // "UNKNOWN"')
+            echo "[$i] Round3 status=$STATUS"
+            if [ "$STATUS" = "COMPLETED" ]; then
+              echo "Round 3 Action reached COMPLETED"
+              break
+            fi
+            if [ "$STATUS" = "FAILED" ]; then
+              echo "FAIL: Round 3 action status is FAILED"
+              echo "$RESULT" | jq .
+              exit 1
+            fi
+            if [ "$i" = "60" ]; then
+              echo "FAIL: timed out after 120s waiting for Round 3 COMPLETED"
+              echo "$RESULT" | jq .
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Assert Round 3 — Page Fault verified
+        run: |
+          ACTION_ID=${{ steps.start3.outputs.action_id3 }}
+          RESULT=$(curl -s "http://localhost:8080/action/${ACTION_ID}")
+          RESPONSE_TEXT=$(echo "$RESULT" | jq -r '.data.result.response // ""')
+          NOTEPAD=$(echo "$RESULT" | jq -r '.data.result.notepad // ""')
+
+          echo "Round 3 response: $RESPONSE_TEXT"
+          echo "Round 3 notepad:  $NOTEPAD"
+
+          PASSED=true
+          if echo "$RESPONSE_TEXT" | grep -q "\[PAGE_IN\]"; then
+            echo "PASS: Round 3 response contains [PAGE_IN] — page fault executed"
+          else
+            echo "FAIL: Round 3 response does not contain [PAGE_IN]"
+            PASSED=false
+          fi
+
+          if echo "$NOTEPAD" | grep -q "\[page-in:README.md\]"; then
+            echo "PASS: Round 3 notepad contains [page-in:README.md] — page-in recorded in L2 cache"
+          else
+            echo "FAIL: Round 3 notepad does not contain [page-in:README.md]"
+            PASSED=false
+          fi
+
+          if [ "$PASSED" = "false" ]; then
+            echo "=== Full Round 3 result ==="
+            echo "$RESULT" | jq .
+            exit 1
+          fi
+
+          echo ""
+          echo "==================================================="
+          echo " E2E PASSED: Stage 4 Page Fault verified"
+          echo "   [Round 3] POST /devos/start (repoPath+filePath) → COMPLETED ✓"
+          echo "   [Round 3] response [PAGE_IN] Loaded file: README.md ✓"
+          echo "   [Round 3] notepad [page-in:README.md] ✓"
+          echo "   Stage 4 Page Fault: DONE ✓"
+          echo "==================================================="
+
+      - name: Print logs on failure (Round 3)
+        if: failure()
+        run: |
+          echo "=== backend.log ==="
+          cat backend.log || echo "(no backend.log)"
+          echo ""
+          echo "=== worker.log ==="
+          cat worker.log || echo "(no worker.log)"

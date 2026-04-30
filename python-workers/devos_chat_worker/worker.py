@@ -193,17 +193,86 @@ def _call_glm(user_text: str, notepad: Optional[str]) -> str:
     return resp.choices[0].message.content.strip()
 
 
-def call_llm(user_text: str, notepad: Optional[str]) -> str:
+# ─────────────────────────────────────────────────────────────
+# B-005 Page Fault — 安全文件读取（Repo as Disk）
+# ─────────────────────────────────────────────────────────────
+
+def safe_read_repo_file(repo_path: str, file_path: str, max_bytes: int = 32768) -> dict:
+    """
+    安全读取 repo_path 下 file_path 指向的文件内容。
+
+    安全不变量：
+      - file_path 必须是相对路径（不能以 '/' 开头）
+      - file_path 不能含 '..' 路径穿越
+      - resolved path 必须仍在 realpath(repo_path) 内
+      - 只读取普通文件（非目录、非符号链接目标目录）
+      - 最多读取 max_bytes 字节
+
+    返回: {ok: bool, content: str, error: str}
+    """
+    if not repo_path or not file_path:
+        return {"ok": False, "content": "", "error": "repo_path or file_path is empty"}
+
+    # 安全检查 1：file_path 不得是绝对路径
+    if os.path.isabs(file_path):
+        return {"ok": False, "content": "", "error": "file_path must be relative, not absolute"}
+
+    # 安全检查 2：file_path 不得含 '..'
+    norm = os.path.normpath(file_path)
+    if ".." in norm.split(os.sep):
+        return {"ok": False, "content": "", "error": "file_path must not contain '..'"}
+
+    # 安全检查 3：resolved path 必须在 repo_path 内（防符号链接逃逸）
+    real_repo = os.path.realpath(repo_path)
+    candidate = os.path.realpath(os.path.join(repo_path, file_path))
+    if not candidate.startswith(real_repo + os.sep) and candidate != real_repo:
+        return {"ok": False, "content": "", "error": "resolved path escapes repo boundary"}
+
+    # 安全检查 4：只读取普通文件
+    if not os.path.isfile(candidate):
+        return {"ok": False, "content": "", "error": f"not a regular file: {file_path}"}
+
+    try:
+        with open(candidate, "r", encoding="utf-8", errors="replace") as fh:
+            content = fh.read(max_bytes)
+        LOGGER.info("[page-in] read %d bytes from %s", len(content), file_path)
+        return {"ok": True, "content": content, "error": ""}
+    except OSError as exc:
+        return {"ok": False, "content": "", "error": str(exc)}
+
+
+def call_llm(user_text: str, notepad: Optional[str], payload: Optional[dict] = None) -> str:
     """
     LLM 调度：DEMO_MODE > GLM > OpenAI
     对应 OS 中"CPU 执行指令"环节。
 
     DEMO_MODE 优先：若显式设置 DEMO_MODE=true，无论是否有 LLM key，
     均使用 stub 响应（保证 CI/E2E 完全可控）。
+
+    payload（可选）：用于 B-005 Page Fault — 从 repo_path/file_path 读取文件内容。
     """
     if DEMO_MODE:
         LOGGER.warning("DEMO_MODE: returning stub response")
         retry_note = f"\n[Notepad context was present]" if notepad else ""
+        # B-005 Page Fault: if repo_path + file_path present in payload, do page-in
+        repo_path = payload.get("repo_path", "").strip() if isinstance(payload, dict) else ""
+        file_path = payload.get("file_path", "").strip() if isinstance(payload, dict) else ""
+        if repo_path and file_path:
+            page_in_result = safe_read_repo_file(repo_path, file_path)
+            if page_in_result["ok"]:
+                excerpt = page_in_result["content"][:300]
+                return (
+                    f"[DEMO] I received your request: \"{user_text[:100]}\"\n"
+                    f"[PAGE_IN] Loaded file: {file_path}\n"
+                    f"{excerpt}\n"
+                    f"This is a demo stub response from Slack Dev OS worker.{retry_note}"
+                )
+            else:
+                return (
+                    f"[DEMO] I received your request: \"{user_text[:100]}\"\n"
+                    f"[PAGE_IN: FILE NOT FOUND] {file_path}: {page_in_result['error']}\n"
+                    f"This is a demo stub response from Slack Dev OS worker.{retry_note}"
+                )
         return (
             f"[DEMO] I received your request: \"{user_text[:100]}\"\n"
             f"This is a demo stub response from Slack Dev OS worker.{retry_note}"
@@ -308,8 +377,9 @@ def execute(assignment: dict) -> tuple[str, dict, Optional[str]]:
         LOGGER.info("Context Restore: injecting notepad into prompt (retry=%d)", retry_count)
 
     # --- CPU 执行：调用 LLM（notepad 若存在则始终注入，支持顺序周期恢复）---
+    # B-005: pass payload so DEMO_MODE can include page-in content in response
     try:
-        llm_response = call_llm(user_text, notepad)
+        llm_response = call_llm(user_text, notepad, payload=payload)
     except Exception as exc:
         LOGGER.error("LLM call failed for action %s: %s", action_id, exc)
         return "FAILED", {}, str(exc)
@@ -319,9 +389,18 @@ def execute(assignment: dict) -> tuple[str, dict, Optional[str]]:
         post_to_slack(slack_thread_id, llm_response)
 
     # --- 构建 result JSON（含 notepad 快照供下次 Context Restore）---
+    # B-005 Page Fault: if page-in was performed, record in notepad
+    repo_path = payload.get("repo_path", "").strip()
+    file_path_val = payload.get("file_path", "").strip()
+    if repo_path and file_path_val:
+        page_in_note = f"[page-in:{file_path_val}] loaded from {repo_path}"
+        notepad_snapshot = f"{page_in_note}\n[action:{action_id}] {user_text[:200]} → {llm_response[:300]}"
+    else:
+        notepad_snapshot = f"[action:{action_id}] {user_text[:200]} → {llm_response[:500]}"
+
     result = {
         "response": llm_response,
-        "notepad": f"[action:{action_id}] {user_text[:200]} → {llm_response[:500]}",
+        "notepad": notepad_snapshot,
     }
 
     LOGGER.info("Action %s SUCCEEDED", action_id)

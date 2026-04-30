@@ -8,10 +8,16 @@ import jakarta.validation.constraints.NotBlank;
  * prevActionId（可选）：上一个 Action 的 ID，用于 Context Restore。
  *   若提供，DevOsService 会读取该 Action 的 notepad_ref 并写入新 PCB，
  *   实现指令周期间的上下文传递。
+ *
+ * repoPath（可选）：本地 Git 仓库绝对路径，用于 B-005 Page Fault 文件检索。
+ * filePath（可选）：相对于 repoPath 的文件路径（不得含 ".." 或绝对路径头）。
+ *   若同时提供 repoPath 和 filePath，worker 会将文件内容作为 page-in context 注入。
  */
 public record DevOsStartRequest(
         @NotBlank(message = "must not be blank") String text,
         @NotBlank(message = "must not be blank") String slackThreadId,
-        Long prevActionId
+        Long prevActionId,
+        String repoPath,
+        String filePath
 ) {
 }
