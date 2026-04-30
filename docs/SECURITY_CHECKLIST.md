@@ -110,7 +110,7 @@ bash scripts/secret_scan.sh
 | Check | Status | Evidence |
 |---|---|---|
 | Java dependencies managed by Spring Boot 3.3.6 BOM | ✅ PASS | `pom.xml` — Spring Boot parent |
-| No known CVEs in listed Python deps (requests, openai, zhipuai, pytest) | ✅ PASS | Pinned in `requirements.txt`; run `pip audit` for continuous monitoring |
+| Python dep CVE scan (`pip-audit`) | ⚠️ PENDING | `pip-audit` not installed in v0.1.0-rc1 build env; deps pinned in `requirements.txt` but no formal audit run. Run `pip install pip-audit && pip-audit -r requirements.txt` to verify before production use. |
 
 ---
 
@@ -127,6 +127,6 @@ bash scripts/secret_scan.sh
 | S-007 | Thread ownership guard | ✅ PASS |
 | S-008 | Workspace mutex | ✅ PASS |
 | S-009 | CI secret policy | ✅ PASS |
-| S-010 | Dependency security | ✅ PASS |
+| S-010 | Dependency security (pip-audit) | ⚠️ PENDING |
 
-**Overall: 10/10 PASS** — no open security items for v0.1.0-rc1.
+**Overall: 9/10 PASS, 1 PENDING** — S-010 pip-audit not run; all other invariants verified for v0.1.0-rc1.

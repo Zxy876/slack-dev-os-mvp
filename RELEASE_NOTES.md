@@ -1,5 +1,14 @@
 # Slack Dev OS — Release Notes
 
+## v0.1.0-rc2 (2026-05-01)
+
+> **Release Candidate 2**: Documentation accuracy fix only. No code changes.
+> Corrects `docs/SECURITY_CHECKLIST.md` S-010 — the v0.1.0-rc1 checklist claimed `✅ PASS` for Python dependency CVE scan but `pip-audit` was not run. Changed to `⚠️ PENDING` with instructions for manual verification. Overall security summary updated from 10/10 to 9/10 PASS + 1 PENDING.
+>
+> All capabilities, test counts, and CI proof from v0.1.0-rc1 remain unchanged.
+
+---
+
 ## v0.1.0-rc1 (2026-04-30)
 
 > **Release Candidate 1**: All Stage 0–6 capabilities implemented, tested, and audited.
