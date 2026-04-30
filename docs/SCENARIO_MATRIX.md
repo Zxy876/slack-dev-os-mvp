@@ -155,6 +155,17 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 | Retried action waits backoff duration | `scheduledAt` is in the future |
 | Worker cannot claim action before backoff expires | Action not polled prematurely |
 
+### Scenario 3.4 — DAG Acyclicity Guarantee (B-004) ✅
+
+| Aspect | Invariant | Validation |
+|---|---|---|
+| Linear chain A→B→C | Creates correctly; B/C BLOCKED; unlock in order | `testLinearChainBlocksAndUnlocksInOrder` ✅ |
+| Direct reverse cycle (A→B, add B→A) | `wouldCreateCycle(A,[B])=true` | `testDirectReverseCycleDetected` ✅ |
+| Indirect 3-node cycle (A→B→C, add C→A) | `wouldCreateCycle(A,[C])=true`; self-loop detected | `testIndirectThreeNodeCycleDetected` ✅ |
+| Rejected createAction — no residue | ApiException + transaction rollback → 0 new rows | `testCreateActionRejectsNonexistentUpstreamAndLeavesNoResidue` ✅ |
+
+**Implementation**: `ActionService.wouldCreateCycle(Long downstreamId, List<Long> proposedUpstreamIds)` — BFS from downstreamId via existing downstream edges; if any reachable node equals a proposed upstream, cycle detected. Called defensively in `createAction` after action insert. Self-loop check included.
+
 ---
 
 ## Stage 4 — Disk / Page Fault Simulation (PLANNED)

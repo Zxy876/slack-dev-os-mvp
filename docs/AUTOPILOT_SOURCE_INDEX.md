@@ -22,7 +22,7 @@
 | 8   | ARC     | 多层检索器（工具调用 / RAG）     | ⏳ DEFERRED | — | Stage 4 → B-009                  |
 | 9   | ARC     | Watchdog 超时回收                | ✅ DONE    | `ActionService.reclaimExpiredLeases()` + `DevOsWatchdogLeaseTest` (3 tests: RETRY_WAIT, DEAD_LETTER, enqueueDueRetries) | B-002 ✓ |
 | 10  | Q26     | 用户中断信号（Interrupt Signal） | ⏳ DEFERRED | — | Stage 3 → B-003                  |
-| 11  | MODEL   | DAG 依赖 / 上游 ID               | ✅ DONE | `action_dependency` 表 + `validateUpstreamActions()` | 缺环检测测试 → B-004 |
+| 11  | MODEL   | DAG 依赖 / 上游 ID               | ✅ DONE | `action_dependency` 表 + `validateUpstreamActions()` + `ActionService.wouldCreateCycle()` BFS; `DevOsDagCycleTest` (4 tests) | B-004 ✓ |
 | 12  | Q26     | Page Fault / 仓库检索            | ⏳ DEFERRED | — | Stage 4 → B-005                  |
 | 13  | MODEL   | Redis SETNX 互斥锁               | ⏳ DEFERRED | — | Stage 5 → B-006                  |
 | 14  | Q26     | 访问控制 / 权限隔离              | ⏳ DEFERRED | — | Stage 6 → B-007                  |

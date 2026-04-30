@@ -54,7 +54,7 @@ POST /devos/start
 - `devos_chat` Python Worker (LLM + Slack integration)
 - Minimal notepad persistence for context restore on retry
 - **Stage 2: Context Restore** — `prevActionId` field propagates notepad across sequential Actions
-- Full test suite passing: **90 tests, 0 failures, BUILD SUCCESS**
+- Full test suite passing: **94 tests, 0 failures, BUILD SUCCESS**
 
 ## Architecture Overview
 
@@ -122,7 +122,7 @@ curl -X POST http://localhost:8080/devos/start \
 mvn test
 ```
 
-**Verified result: 90 tests, 0 failures, BUILD SUCCESS**
+**Verified result: 94 tests, 0 failures, BUILD SUCCESS**
 
 The test suite runs entirely with H2 in-memory — no MySQL or Redis needed for tests.
 
@@ -241,8 +241,8 @@ See [docs/SCENARIO_MATRIX.md](docs/SCENARIO_MATRIX.md) for the full 7-stage kern
 
 - **Stage 0** (✅ Complete): Syscall, PCB, capability dispatch, worker, DEMO stub, notepad, local E2E
 - **Stage 1** (✅ Complete): GitHub Actions CI proof (mvn test + DEMO E2E)
-- **Stage 2** (Planned): Context restore under load — multi-turn sequential actions
-- **Stage 3** (Planned): Fault tolerance — watchdog, lease expiry, dead letter
+- **Stage 2** (✅ Complete): Context restore — prevActionId, notepad propagation, isolation (3 tests)
+- **Stage 3** (✅ Partial): Fault tolerance — Watchdog/Lease/Retry (B-002, 3 tests) + DAG acyclicity proof (B-004, 4 tests: `wouldCreateCycle` BFS, linear chain unlock, direct/indirect cycle detection)
 - **Stage 4** (Planned): Disk/page fault simulation — repo file search worker
 - **Stage 5** (Planned): Single-writer mutex — Git branch + Redis SETNX
 - **Stage 6** (Planned): Real Slack slash command + LLM keys

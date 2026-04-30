@@ -2,7 +2,9 @@ package com.asyncaiflow.service;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -155,6 +157,11 @@ public class ActionService {
         }
 
         actionMapper.insert(action);
+
+        if (wouldCreateCycle(action.getId(), upstreamActionIds)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "Adding these upstream dependencies would create a directed cycle in the DAG");
+        }
 
         for (Long upstreamActionId : upstreamActionIds) {
             ActionDependencyEntity dependency = new ActionDependencyEntity();
@@ -855,6 +862,59 @@ public class ActionService {
         if (crossWorkflowDependency) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Upstream actions must belong to the same workflow");
         }
+    }
+
+    /**
+     * Returns true if making {@code downstreamId} depend on each of {@code proposedUpstreamIds}
+     * would introduce a directed cycle in the DAG.
+     *
+     * <p>Algorithm: BFS from {@code downstreamId} following existing downstream edges (i.e. edges
+     * where {@code downstreamId} is an upstream). If any reachable node equals a proposed upstream,
+     * the new edge would close a cycle.
+     *
+     * <p>Self-loops ({@code proposedUpstreamIds} contains {@code downstreamId}) are detected directly.
+     *
+     * <p>This method is public so that it can be called from tests seeding the dependency table
+     * directly, simulating future {@code addDependency} API scenarios.
+     */
+    public boolean wouldCreateCycle(Long downstreamId, List<Long> proposedUpstreamIds) {
+        if (proposedUpstreamIds.isEmpty()) {
+            return false;
+        }
+        Set<Long> upstreamSet = new HashSet<>(proposedUpstreamIds);
+
+        // Self-loop: the action lists itself as its own upstream
+        if (upstreamSet.contains(downstreamId)) {
+            return true;
+        }
+
+        // BFS from downstreamId following existing downstream edges.
+        // If any reachable node is a proposed upstream, adding those edges creates a cycle.
+        Set<Long> visited = new HashSet<>();
+        Deque<Long> queue = new ArrayDeque<>();
+        queue.add(downstreamId);
+
+        while (!queue.isEmpty()) {
+            Long current = queue.poll();
+            if (!visited.add(current)) {
+                continue;
+            }
+
+            List<ActionDependencyEntity> outEdges = actionDependencyMapper.selectList(
+                    new LambdaQueryWrapper<ActionDependencyEntity>()
+                            .eq(ActionDependencyEntity::getUpstreamActionId, current));
+
+            for (ActionDependencyEntity edge : outEdges) {
+                Long child = edge.getDownstreamActionId();
+                if (upstreamSet.contains(child)) {
+                    return true;
+                }
+                if (!visited.contains(child)) {
+                    queue.add(child);
+                }
+            }
+        }
+        return false;
     }
 
     private List<Long> normalizeUpstreamActionIds(List<Long> upstreamActionIds) {
