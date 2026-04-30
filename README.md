@@ -3,6 +3,34 @@
 [![CI — Build & Test](https://github.com/Zxy876/slack-dev-os-mvp/actions/workflows/ci.yml/badge.svg)](https://github.com/Zxy876/slack-dev-os-mvp/actions/workflows/ci.yml)
 [![Demo E2E](https://github.com/Zxy876/slack-dev-os-mvp/actions/workflows/devos-demo-e2e.yml/badge.svg)](https://github.com/Zxy876/slack-dev-os-mvp/actions/workflows/devos-demo-e2e.yml)
 
+> **v0.1.0-rc1** — Release Candidate. All Stage 0–6 capabilities implemented and verified. 108 Java tests + 21 Python tests, 0 failures. Two E2E scripts green. CI passes on every push.
+>
+> First-time demo: use `DEMO_MODE=true` (default). No real Slack tokens or LLM keys needed.
+
+## Quickstart
+
+```bash
+# 1. Run all Java tests (H2 in-memory, no Docker)
+mvn test -Dspring.profiles.active=local
+
+# 2. Run all Python tests
+cd python-workers/devos_chat_worker
+python3 -m pytest test_tool_manager.py test_runtime_config.py -q
+cd ../..
+
+# 3. Demo E2E (local — needs Redis on localhost:6379)
+bash scripts/run_demo_e2e.sh
+
+# 4. Page Fault E2E (local — needs Redis on localhost:6379)
+bash scripts/run_page_fault_e2e.sh
+
+# 5. Validate production config readiness (no real API calls)
+bash scripts/run_production_config_check.sh
+
+# 6. Secret scan
+bash scripts/secret_scan.sh
+```
+
 ## What this is
 
 A minimal working implementation of the **Slack Dev OS** concept, built on top of **AsyncAIFlow 4.8**.
@@ -61,7 +89,8 @@ POST /devos/start
 - **Stage 5: Workspace Single-Writer Mutex** — `writeIntent` + `workspaceKey` in `POST /devos/start`; Redis SETNX prevents concurrent writes to same repo/workspace
 - **Stage 6: Tool Manager** — `ToolCall` / `ToolResponse` / `ToolManager` minimal tool protocol in `worker.py`; whitelist `{repo.read_file}` hard-coded; Page Fault path routes through `TOOL_MANAGER.execute()`; unknown tools return `ok=False` (no exception); 7 Python smoke tests in `test_tool_manager.py`
 - **Stage 6: Ownership Guard (B-007)** — `slackThreadId` is the MVP resource scope boundary; `POST /devos/interrupt` requires `slackThreadId` matching the target Action; `POST /devos/start` with `prevActionId` requires same `slackThreadId`; cross-thread operations return 403 FORBIDDEN
-- Full test suite passing: **108 Java tests + 7 Python smoke tests, 0 failures, BUILD SUCCESS**
+- **Stage 6: Production Config Readiness (B-010)** — `select_llm_backend()` (DEMO > GLM > OpenAI > RuntimeError), `validate_runtime_config()`, `redact_secret()`, `REQUIRE_SLACK_POST` flag, dry-run `run_production_config_check.sh`; 14 Python tests in `test_runtime_config.py`. **Live Slack/LLM integration is config-ready but NOT wired in CI** (no real secrets in CI).
+- Full test suite passing: **108 Java tests + 21 Python tests (7 tool_manager + 14 runtime_config), 0 failures, BUILD SUCCESS**
 
 ## Architecture Overview
 
@@ -282,7 +311,7 @@ Two workflows run automatically on every push and pull request to `main`.
 - Runs on **ubuntu-latest**, Java 21, H2 in-memory (no MySQL needed)
 - Redis 7 service available at localhost:6379
 - Command: `mvn test -Dspring.profiles.active=local`
-- **Passed on commit `6e5bb8c`: 84 tests, 0 failures, BUILD SUCCESS**
+- **108 tests, 0 failures, BUILD SUCCESS** (Stage 0–6, all Java integration tests)
 
 ### Demo E2E — devos_chat Instruction Cycle
 
@@ -293,13 +322,13 @@ Proves the full kernel instruction cycle without any real LLM keys or Slack toke
 1. Builds backend JAR (`mvn package -DskipTests`)
 2. Starts backend via `java -jar` (`local` profile — H2 + Redis)
 3. Waits for `GET /health` → 200
-4. Starts `devos_chat_worker` with `DEMO_MODE=true`
-5. `POST /devos/start` with test payload
-6. Polls `GET /action/{actionId}` until `status == COMPLETED`
-7. Asserts `result.response` contains `[DEMO]`
-8. Asserts `result.notepad` is non-empty
+4. Runs Tool Manager smoke tests (`test_tool_manager.py`, B-008)
+5. Starts `devos_chat_worker` with `DEMO_MODE=true` (GLM/OpenAI keys unset)
+6. **Round 1**: `POST /devos/start` → polls until COMPLETED → asserts `[DEMO]` + notepad present
+7. **Round 2**: `POST /devos/start` with `prevActionId` → polls → asserts `[Notepad context was present]` (Stage 2 Context Restore verified)
+8. **Round 3** (Page Fault E2E): `POST /devos/start` with `repoPath`+`filePath` → asserts `[PAGE_IN]` in response + `[page-in:...]` in notepad (Stage 4 verified)
 
-**Passed on commit `6e5bb8c`**: Full instruction cycle verified in CI.
+**No real LLM keys or Slack tokens needed. CI always uses `DEMO_MODE=true`.**
 
 Can also be triggered manually via `workflow_dispatch`.
 

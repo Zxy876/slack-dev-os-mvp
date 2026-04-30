@@ -394,14 +394,18 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 
 ## Status Summary
 
+> **v0.1.0-rc1** — Release Candidate. All scenarios in scope have been implemented and CI-verified.
+> 108 Java tests + 21 Python tests (7 + 14), 0 failures. Two E2E scripts green. No real secrets in CI.
+
 | Stage | Name | Status | CI Proof |
 |---|---|---|---|
 | 0 | MVP Kernel | ✅ Complete | Local E2E |
 | 1 | CI Proof | ✅ Complete | GitHub Actions |
 | 2 | Context Restore Under Load | ✅ Complete | GHA E2E Round 2 |
-| 3 | Fault Tolerance & Watchdog | ✅ Complete | 104 tests |
+| 3 | Fault Tolerance & Watchdog | ✅ Complete | 108 tests |
 | 4 | Disk / Page Fault Simulation | ✅ Complete | GHA E2E Round 3 |
-| 5 | Single-Writer Mutex | ✅ Complete | 104 tests |
+| 5 | Single-Writer Mutex | ✅ Complete | 108 tests |
 | 6 | Tool Manager (minimal) | ✅ Complete | 7 Python smoke tests + GHA |
-| 6 | Real Slack + LLM | 🔶 PARTIAL | config + tests; no live key in CI |
+| 6 | Ownership Guard (B-007) | ✅ Complete | 4 integration tests |
 | 6 | Production Config Readiness (B-010) | ✅ Complete | `test_runtime_config.py` (14 tests) + config check script |
+| 6 | Real Slack + LLM live | 🔶 PARTIAL | Config-ready; no live key in CI (future: B-010-live) |
