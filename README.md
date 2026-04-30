@@ -171,7 +171,11 @@ LLM priority: `GLM_API_KEY` > `OPENAI_API_KEY` > `DEMO_MODE=true` (stub response
 
 ## GitHub Actions CI
 
-Two workflows run automatically on every push and pull request to `main`:
+Two workflows run automatically on every push and pull request to `main`.
+
+> **Phase 2 CI proof — both workflows passed on commit `6e5bb8c`**
+> - CI run: https://github.com/Zxy876/slack-dev-os-mvp/actions/runs/25157666547
+> - Demo E2E run: https://github.com/Zxy876/slack-dev-os-mvp/actions/runs/25157666524
 
 ### CI — Build & Test
 
@@ -180,7 +184,7 @@ Two workflows run automatically on every push and pull request to `main`:
 - Runs on **ubuntu-latest**, Java 21, H2 in-memory (no MySQL needed)
 - Redis 7 service available at localhost:6379
 - Command: `mvn test -Dspring.profiles.active=local`
-- **Pass criteria: 84 tests, 0 failures, BUILD SUCCESS**
+- **Passed on commit `6e5bb8c`: 84 tests, 0 failures, BUILD SUCCESS**
 
 ### Demo E2E — devos_chat Instruction Cycle
 
@@ -188,13 +192,16 @@ Two workflows run automatically on every push and pull request to `main`:
 
 Proves the full kernel instruction cycle without any real LLM keys or Slack tokens:
 
-1. Starts backend (`local` profile — H2 + Redis)
-2. Waits for `GET /health` → 200
-3. Starts `devos_chat_worker` with `DEMO_MODE=true`
-4. `POST /devos/start` with test payload
-5. Polls `GET /action/{actionId}` until `status == COMPLETED`
-6. Asserts `result.response` contains `[DEMO]`
-7. Asserts `result.notepad` is non-empty
+1. Builds backend JAR (`mvn package -DskipTests`)
+2. Starts backend via `java -jar` (`local` profile — H2 + Redis)
+3. Waits for `GET /health` → 200
+4. Starts `devos_chat_worker` with `DEMO_MODE=true`
+5. `POST /devos/start` with test payload
+6. Polls `GET /action/{actionId}` until `status == COMPLETED`
+7. Asserts `result.response` contains `[DEMO]`
+8. Asserts `result.notepad` is non-empty
+
+**Passed on commit `6e5bb8c`**: Full instruction cycle verified in CI.
 
 Can also be triggered manually via `workflow_dispatch`.
 
