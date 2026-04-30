@@ -35,6 +35,7 @@ import json
 import logging
 import os
 import time
+from dataclasses import dataclass, field
 from typing import Optional
 
 import requests
@@ -241,6 +242,96 @@ def safe_read_repo_file(repo_path: str, file_path: str, max_bytes: int = 32768) 
         return {"ok": False, "content": "", "error": str(exc)}
 
 
+# ─────────────────────────────────────────────────────────────
+# B-008 Tool Manager — 最小工具协议 (Minimal Tool Protocol)
+# ─────────────────────────────────────────────────────────────
+
+@dataclass
+class ToolCall:
+    """结构化工具调用请求。"""
+    name: str
+    args: dict = field(default_factory=dict)
+
+
+@dataclass
+class ToolResponse:
+    """结构化工具调用响应。"""
+    name: str
+    ok: bool
+    content: str = ""
+    error: str = ""
+    metadata: dict = field(default_factory=dict)
+
+
+class ToolManager:
+    """
+    最小工具注册表 / Minimal Tool Registry。
+
+    安全不变量：
+      - 只允许 WHITELIST 内的工具名注册和执行；
+      - 未知工具返回 ok=False 的 ToolResponse，不抛异常；
+      - 禁止任意 shell command、网络工具、动态插件加载。
+    当前白名单: repo.read_file
+    """
+    WHITELIST: frozenset = frozenset({"repo.read_file"})
+
+    def __init__(self) -> None:
+        self._handlers: dict = {}
+
+    def register(self, name: str, handler) -> None:
+        """注册工具处理器（仅白名单内工具可注册）。"""
+        if name not in self.WHITELIST:
+            raise ValueError(
+                f"Tool '{name}' is not in the whitelist: {sorted(self.WHITELIST)}"
+            )
+        self._handlers[name] = handler
+        LOGGER.info("[tool-manager] registered tool: %s", name)
+
+    def execute(self, tool_call: ToolCall) -> ToolResponse:
+        """执行工具调用；未知工具返回 ok=False（不抛异常）。"""
+        if tool_call.name not in self._handlers:
+            LOGGER.warning(
+                "[tool-manager] unknown tool requested: '%s'", tool_call.name
+            )
+            return ToolResponse(
+                name=tool_call.name,
+                ok=False,
+                error=(
+                    f"Unknown tool: '{tool_call.name}'."
+                    f" Available: {sorted(self._handlers)}"
+                ),
+            )
+        try:
+            return self._handlers[tool_call.name](tool_call.args)
+        except Exception as exc:  # pragma: no cover
+            LOGGER.warning("[tool-manager] tool '%s' raised: %s", tool_call.name, exc)
+            return ToolResponse(name=tool_call.name, ok=False, error=str(exc))
+
+
+def _repo_read_file_handler(args: dict) -> ToolResponse:
+    """repo.read_file 工具处理器 — safe_read_repo_file() 的协议包装。"""
+    repo_path = args.get("repo_path", "")
+    file_path_arg = args.get("file_path", "")
+    max_bytes = int(args.get("max_bytes", 32768))
+    result = safe_read_repo_file(repo_path, file_path_arg, max_bytes)
+    return ToolResponse(
+        name="repo.read_file",
+        ok=result["ok"],
+        content=result.get("content", ""),
+        error=result.get("error", ""),
+        metadata={
+            "repo_path": repo_path,
+            "file_path": file_path_arg,
+            "max_bytes": max_bytes,
+        },
+    )
+
+
+# 全局 ToolManager 单例（模块加载时注册白名单工具）
+TOOL_MANAGER = ToolManager()
+TOOL_MANAGER.register("repo.read_file", _repo_read_file_handler)
+
+
 def call_llm(user_text: str, notepad: Optional[str], payload: Optional[dict] = None) -> str:
     """
     LLM 调度：DEMO_MODE > GLM > OpenAI
@@ -258,9 +349,15 @@ def call_llm(user_text: str, notepad: Optional[str], payload: Optional[dict] = N
         repo_path = payload.get("repo_path", "").strip() if isinstance(payload, dict) else ""
         file_path = payload.get("file_path", "").strip() if isinstance(payload, dict) else ""
         if repo_path and file_path:
-            page_in_result = safe_read_repo_file(repo_path, file_path)
-            if page_in_result["ok"]:
-                excerpt = page_in_result["content"][:300]
+            # B-008: route through ToolManager instead of calling safe_read_repo_file directly
+            page_in_resp = TOOL_MANAGER.execute(
+                ToolCall(
+                    name="repo.read_file",
+                    args={"repo_path": repo_path, "file_path": file_path},
+                )
+            )
+            if page_in_resp.ok:
+                excerpt = page_in_resp.content[:300]
                 return (
                     f"[DEMO] I received your request: \"{user_text[:100]}\"\n"
                     f"[PAGE_IN] Loaded file: {file_path}\n"
@@ -270,7 +367,7 @@ def call_llm(user_text: str, notepad: Optional[str], payload: Optional[dict] = N
             else:
                 return (
                     f"[DEMO] I received your request: \"{user_text[:100]}\"\n"
-                    f"[PAGE_IN: FILE NOT FOUND] {file_path}: {page_in_result['error']}\n"
+                    f"[PAGE_IN: FILE NOT FOUND] {file_path}: {page_in_resp.error}\n"
                     f"This is a demo stub response from Slack Dev OS worker.{retry_note}"
                 )
         return (

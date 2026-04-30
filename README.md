@@ -59,7 +59,8 @@ POST /devos/start
 - **Stage 3: User Interrupt** — `POST /devos/interrupt` transitions any active Action to FAILED; terminal actions protected
 - **Stage 4: Page Fault** — `repoPath` + `filePath` in `POST /devos/start`; worker safely reads file and injects `[PAGE_IN]` context
 - **Stage 5: Workspace Single-Writer Mutex** — `writeIntent` + `workspaceKey` in `POST /devos/start`; Redis SETNX prevents concurrent writes to same repo/workspace
-- Full test suite passing: **104 tests, 0 failures, BUILD SUCCESS**
+- **Stage 6: Tool Manager** — `ToolCall` / `ToolResponse` / `ToolManager` minimal tool protocol in `worker.py`; whitelist `{repo.read_file}` hard-coded; Page Fault path routes through `TOOL_MANAGER.execute()`; unknown tools return `ok=False` (no exception); 7 Python smoke tests in `test_tool_manager.py`
+- Full test suite passing: **104 Java tests + 7 Python smoke tests, 0 failures, BUILD SUCCESS**
 
 ## Architecture Overview
 
@@ -292,8 +293,9 @@ See [docs/SCENARIO_MATRIX.md](docs/SCENARIO_MATRIX.md) for the full 7-stage kern
 - **Stage 2** (✅ Complete): Context restore — prevActionId, notepad propagation, isolation (3 tests)
 - **Stage 3** (✅ Complete): Fault tolerance — Watchdog/Lease/Retry (B-002, 3 tests) + User Interrupt B-003 (4 tests) + DAG acyclicity B-004 (4 tests: `wouldCreateCycle` BFS, linear chain unlock, direct/indirect cycle detection)
 - **Stage 4** (✅ Complete): Disk/Page Fault — `repoPath`+`filePath` payload 透传，`safe_read_repo_file` 安全校验，[PAGE_IN] marker 注入，[page-in] notepad 记录；2 集成测试 + Page Fault E2E PASSED
-- **Stage 5** (Planned): Single-writer mutex — Git branch + Redis SETNX
-- **Stage 6** (Planned): Real Slack slash command + LLM keys
+- **Stage 5** (✅ Complete): Single-writer mutex — `writeIntent`/`workspaceKey`, Redis SETNX, 4 tests (`DevOsWorkspaceMutexTest`)
+- **Stage 6** (✅ Partial): Tool Manager — `ToolCall`/`ToolResponse`/`ToolManager`, whitelist `{repo.read_file}`, Page Fault → `TOOL_MANAGER.execute()`, 7 Python smoke tests
+- **Stage 6** (Planned): Real Slack slash command + LLM keys (B-007 RBAC, B-010 real keys)
 
 ## Scope
 

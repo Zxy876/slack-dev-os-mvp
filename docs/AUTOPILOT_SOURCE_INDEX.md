@@ -26,7 +26,7 @@
 | 12  | Q26     | Page Fault / 仓库检索            | ✅ DONE | `DevOsStartRequest.repoPath/filePath` 透传 payload；`worker.py safe_read_repo_file()`：安全校验 + 读取；DEMO_MODE [PAGE_IN] marker；`DevOsPageFaultRequestTest`（2 tests）；Page Fault E2E PASSED | B-005 ✓ |
 | 13  | MODEL   | Redis SETNX 互斥锁               | ✅ DONE | `ActionQueueService.tryAcquireWorkspaceLock/releaseWorkspaceLock`；`ActionService.pollAction` workspace check；`DevOsStartRequest.writeIntent/workspaceKey`；`DevOsWorkspaceMutexTest`（4 tests） | B-006 ✓ |
 | 14  | Q26     | 访问控制 / 权限隔离              | ⏳ DEFERRED | — | Stage 6 → B-007                  |
-| 15  | Q26     | 工具管理器（Tool Manager）       | ⏳ DEFERRED | — | Stage 6 → B-008                  |
+| 15  | Q26     | 工具管理器（Tool Manager）       | ✅ DONE | `worker.py` `ToolCall`/`ToolResponse`/`ToolManager`；WHITELIST={repo.read_file}；Page Fault → `TOOL_MANAGER.execute()`；`test_tool_manager.py`（7 smoke tests） | B-008 ✓ |
 | 16  | MODEL   | notepad_ref 持久化与注入         | ✅ DONE | `extractNotepadFromResult()` + `notepadRef` in poll response | —  |
 | 17  | Q26     | 多模型异构调度                   | ⏳ DEFERRED | — | Stage 6 → B-011                  |
 | 18  | ARC     | 顺序指令周期完整性验证           | ✅ DONE    | E2E 双轮（Round 1 + Round 2 prevActionId）均通过；`DevOsContextRestoreTest`（3 tests）；87 tests BUILD SUCCESS | — |

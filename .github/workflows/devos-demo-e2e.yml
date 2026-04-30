@@ -67,6 +67,11 @@ jobs:
       - name: Install Python worker dependencies
         run: pip install -r python-workers/devos_chat_worker/requirements.txt
 
+      - name: Run Tool Manager smoke tests (B-008)
+        run: |
+          cd python-workers/devos_chat_worker
+          python -m pytest test_tool_manager.py -q
+
       - name: Start devos_chat worker (DEMO_MODE)
         run: |
           env -u OPENAI_API_KEY -u GLM_API_KEY \

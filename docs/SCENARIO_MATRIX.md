@@ -15,9 +15,10 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 | Working memory / register snapshot | `notepad_ref` (CLOB in ActionEntity) | ✅ Stage 0 |
 | Context restore on retry | notepad_ref injection into LLM system prompt | ✅ Stage 0 |
 | Context switch (CI proof) | GitHub Actions E2E workflow | ✅ Stage 1 |
-| Fault tolerance / watchdog | lease expiry, RETRY_WAIT, DEAD_LETTER | ⏳ Stage 3 |
+| Fault tolerance / watchdog | lease expiry, RETRY_WAIT, DEAD_LETTER | ✅ Stage 3 |
 | Page fault / disk access | Repo file search worker tool | ✅ Stage 4 |
 | Single-writer mutex | Git branch workspace_snapshot + Redis SETNX | ✅ Stage 5 |
+| Tool Manager / Tool Call protocol | `ToolManager` whitelist + `repo.read_file` | ✅ Stage 6 |
 | Real syscall (Slack + LLM) | Slack slash command + chat.postMessage | ⏳ Stage 6 |
 
 ---
@@ -250,40 +251,57 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 
 ---
 
-## Stage 5 — Single-Writer Mutex (PLANNED)
+## Stage 5 — Single-Writer Mutex (COMPLETED)
 
 **Goal**: Prevent concurrent writes to the same workspace branch (analogous to mutex/lock).
 
-### Scenario 5.1 — Git Branch Workspace Snapshot
+**Validation**: ✅ 104 tests, 0 failures, BUILD SUCCESS. B-006 complete.
 
-| Step | Expected |
-|---|---|
-| Worker acquires Redis SETNX lock for `workspace:<repoId>` | Lock granted |
-| Second worker attempts same lock | Lock denied, worker waits or aborts |
-| First worker commits and releases lock | Second worker can now acquire |
+### Scenario 5.1 — Write Intent Blocking ✅
+
+| Aspect | Invariant | Validation |
+|---|---|---|
+| First write-intent action acquires workspace lock | `tryAcquireWorkspaceLock` returns true | `testWriteIntentBlocksSecondWriter` ✅ |
+| Second write-intent action is re-queued | Lock contention → action re-enqueued, not double-executed | `testWriteIntentBlocksSecondWriter` ✅ |
+| Read-only actions bypass mutex | `writeIntent=false` → no lock attempted | `testReadOnlyActionsBypassMutex` ✅ |
+
+### Scenario 5.2 — Lock Release on Completion / Interrupt ✅
+
+| Aspect | Invariant | Validation |
+|---|---|---|
+| SUCCEEDED releases workspace lock | Next writer can now acquire | `testLockReleasedOnSucceeded` ✅ |
+| Interrupt releases workspace lock | `interruptAction` calls `releaseWorkspaceLockIfApplicable` | `testLockReleasedOnInterrupt` ✅ |
+
+**Implementation**: `ActionQueueService.tryAcquireWorkspaceLock/releaseWorkspaceLock` Redis SETNX; `ActionService.pollAction` workspace check; `DevOsStartRequest.writeIntent/workspaceKey`; `DevOsWorkspaceMutexTest` (4 tests).
 
 ---
 
-## Stage 6 — Real Slack + LLM Integration (PLANNED)
+## Stage 6 — Tool Manager (COMPLETED)
 
-**Goal**: Full production-mode instruction cycle with real Slack bot and LLM.
+**Goal**: Consolidate the scattered Page Fault file-read capability into a minimal Tool Manager / Tool Call protocol.
 
-### Scenario 6.1 — Slack Slash Command
+**Validation**: ✅ 104 Java tests + 7 Python smoke tests, 0 failures. B-008 complete.
 
-| Step | Expected |
-|---|---|
-| User sends `/devos How do I reset a build?` in Slack | Slack delivers payload to backend |
-| `POST /devos/start` triggered | Action PCB created |
-| LLM processes with real key (GLM or OpenAI) | Real response generated |
-| `chat.postMessage` to Slack thread | User sees response in thread |
+### Scenario 6.1 — ToolManager Whitelist Enforcement ✅
 
-### Scenario 6.2 — Multi-Turn Conversation
+| Aspect | Invariant | Validation |
+|---|---|---|
+| Non-whitelisted tool registration rejected | `ToolManager.register("shell.exec", ...)` raises `ValueError` | `test_register_non_whitelisted_tool_raises_value_error` ✅ |
+| Unknown tool execute returns ok=False | No exception raised; caller handles gracefully | `test_execute_unknown_tool_returns_ok_false` ✅ |
+| Execute always returns ToolResponse | Never raises | `test_execute_unknown_tool_does_not_raise` ✅ |
 
-| Step | Expected |
-|---|---|
-| User follows up in same thread | `slackThreadId` matches previous action |
-| `notepad_ref` injected | LLM has prior context |
-| Response references earlier turns | Context restore validated |
+### Scenario 6.2 — repo.read_file Tool (Security Boundary) ✅
+
+| Security Check | Input | Expected |
+|---|---|---|
+| Valid file read | `file_path="hello.md"` in fixture repo | `ok=True`, content present |
+| Path traversal rejected | `file_path="../etc/passwd"` | `ok=False`, error non-empty |
+| Absolute path rejected | `file_path="/etc/passwd"` | `ok=False`, error non-empty |
+| Non-existent file | `file_path="ghost.txt"` | `ok=False`, error non-empty |
+
+**Implementation**: `ToolCall` / `ToolResponse` dataclasses + `ToolManager` class in `worker.py`; WHITELIST `{"repo.read_file"}`; `_repo_read_file_handler` wraps `safe_read_repo_file()`; `TOOL_MANAGER` module-level singleton; `call_llm()` Page Fault path uses `TOOL_MANAGER.execute()` instead of direct call; `[PAGE_IN]` response marker preserved (E2E backward compatible).
+
+**Tests**: `python-workers/devos_chat_worker/test_tool_manager.py` (7 pytest cases). CI `devos-demo-e2e.yml` runs smoke tests before worker start.
 
 ---
 
@@ -293,8 +311,9 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 |---|---|---|---|
 | 0 | MVP Kernel | ✅ Complete | Local E2E |
 | 1 | CI Proof | ✅ Complete | GitHub Actions |
-| 2 | Context Restore Under Load | ⏳ Planned | — |
-| 3 | Fault Tolerance & Watchdog | ⏳ Planned | — |
-| 4 | Disk / Page Fault Simulation | ⏳ Planned | — |
-| 5 | Single-Writer Mutex | ⏳ Planned | — |
+| 2 | Context Restore Under Load | ✅ Complete | GHA E2E Round 2 |
+| 3 | Fault Tolerance & Watchdog | ✅ Complete | 104 tests |
+| 4 | Disk / Page Fault Simulation | ✅ Complete | GHA E2E Round 3 |
+| 5 | Single-Writer Mutex | ✅ Complete | 104 tests |
+| 6 | Tool Manager (minimal) | ✅ Complete | 7 Python smoke tests + GHA |
 | 6 | Real Slack + LLM | ⏳ Planned | — |
