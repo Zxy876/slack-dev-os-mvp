@@ -1,0 +1,167 @@
+name: Demo E2E — devos_chat Instruction Cycle
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    name: Kernel E2E (DEMO_MODE, no LLM keys)
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build backend (skip tests)
+        run: mvn package -DskipTests --batch-mode
+
+      - name: Start backend (local profile — H2 + Redis)
+        run: |
+          mvn spring-boot:run -Dspring-boot.run.profiles=local > backend.log 2>&1 &
+          echo "Backend starting (PID $!)..."
+
+      - name: Wait for backend to be ready
+        run: |
+          echo "Waiting for /health to return 200..."
+          for i in $(seq 1 90); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/health)
+            if [ "$STATUS" = "200" ]; then
+              echo "Backend ready after ${i}s"
+              break
+            fi
+            if [ "$i" = "90" ]; then
+              echo "Backend failed to start after 90s"
+              echo "=== backend.log ==="
+              cat backend.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Install Python worker dependencies
+        run: pip install -r python-workers/devos_chat_worker/requirements.txt
+
+      - name: Start devos_chat worker (DEMO_MODE)
+        run: |
+          ASYNCAIFLOW_URL=http://localhost:8080 \
+          DEVOS_WORKER_ID=devos-worker-ci \
+          DEMO_MODE=true \
+          POLL_INTERVAL_S=1.0 \
+          python python-workers/devos_chat_worker/worker.py > worker.log 2>&1 &
+          echo "Worker started (PID $!)..."
+          sleep 3
+
+      - name: POST /devos/start — trigger kernel instruction cycle
+        id: start
+        run: |
+          RESPONSE=$(curl -s -X POST http://localhost:8080/devos/start \
+            -H "Content-Type: application/json" \
+            -d '{"text":"How do I reset a build?","slackThreadId":"CDEMO/1714500000.123456"}')
+          echo "POST /devos/start response: $RESPONSE"
+          ACTION_ID=$(echo "$RESPONSE" | jq -r '.data.actionId')
+          if [ -z "$ACTION_ID" ] || [ "$ACTION_ID" = "null" ]; then
+            echo "FAIL: could not extract actionId from response"
+            exit 1
+          fi
+          echo "action_id=$ACTION_ID" >> "$GITHUB_OUTPUT"
+          echo "Action ID: $ACTION_ID"
+
+      - name: Poll GET /action/{id} until COMPLETED (max 120s)
+        run: |
+          ACTION_ID=${{ steps.start.outputs.action_id }}
+          for i in $(seq 1 60); do
+            RESULT=$(curl -s "http://localhost:8080/action/${ACTION_ID}")
+            STATUS=$(echo "$RESULT" | jq -r '.data.status // "UNKNOWN"')
+            echo "[$i] status=$STATUS"
+            if [ "$STATUS" = "COMPLETED" ]; then
+              echo "Action reached COMPLETED"
+              break
+            fi
+            if [ "$STATUS" = "FAILED" ]; then
+              echo "FAIL: action status is FAILED"
+              echo "$RESULT" | jq .
+              exit 1
+            fi
+            if [ "$i" = "60" ]; then
+              echo "FAIL: timed out after 120s waiting for COMPLETED"
+              echo "$RESULT" | jq .
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Assert result.response contains [DEMO] and notepad is present
+        run: |
+          ACTION_ID=${{ steps.start.outputs.action_id }}
+          RESULT=$(curl -s "http://localhost:8080/action/${ACTION_ID}")
+          RESPONSE_TEXT=$(echo "$RESULT" | jq -r '.data.result.response // ""')
+          NOTEPAD=$(echo "$RESULT" | jq -r '.data.result.notepad // ""')
+
+          echo "response: $RESPONSE_TEXT"
+          echo "notepad:  $NOTEPAD"
+
+          PASSED=true
+          if echo "$RESPONSE_TEXT" | grep -q "\[DEMO\]"; then
+            echo "PASS: response contains [DEMO]"
+          else
+            echo "FAIL: response does not contain [DEMO]"
+            PASSED=false
+          fi
+
+          if [ -n "$NOTEPAD" ]; then
+            echo "PASS: notepad is present"
+          else
+            echo "FAIL: notepad is empty"
+            PASSED=false
+          fi
+
+          if [ "$PASSED" = "false" ]; then
+            echo "=== Full result ==="
+            echo "$RESULT" | jq .
+            exit 1
+          fi
+
+          echo ""
+          echo "==================================================="
+          echo " E2E PASSED: Full kernel instruction cycle verified"
+          echo "   POST /devos/start → QUEUED"
+          echo "   devos_chat_worker → DEMO stub → SUCCEEDED"
+          echo "   GET /action/{id}  → COMPLETED"
+          echo "   result.response   → [DEMO] ✓"
+          echo "   result.notepad    → present ✓"
+          echo "==================================================="
+
+      - name: Print logs on failure
+        if: failure()
+        run: |
+          echo "=== backend.log ==="
+          cat backend.log || echo "(no backend.log)"
+          echo ""
+          echo "=== worker.log ==="
+          cat worker.log || echo "(no worker.log)"

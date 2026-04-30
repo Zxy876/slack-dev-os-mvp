@@ -1,5 +1,8 @@
 # Slack Dev OS MVP
 
+[![CI — Build & Test](https://github.com/Zxy876/slack-dev-os-mvp/actions/workflows/ci.yml/badge.svg)](https://github.com/Zxy876/slack-dev-os-mvp/actions/workflows/ci.yml)
+[![Demo E2E](https://github.com/Zxy876/slack-dev-os-mvp/actions/workflows/devos-demo-e2e.yml/badge.svg)](https://github.com/Zxy876/slack-dev-os-mvp/actions/workflows/devos-demo-e2e.yml)
+
 ## What this is
 
 A minimal working implementation of the **Slack Dev OS** concept, built on top of **AsyncAIFlow 4.8**.
@@ -165,6 +168,68 @@ LLM priority: `GLM_API_KEY` > `OPENAI_API_KEY` > `DEMO_MODE=true` (stub response
 ```
 
 `slackThreadId` format: `<channel_id>/<thread_ts>` (e.g. `C08ABC123/1714500000.000100`)
+
+## GitHub Actions CI
+
+Two workflows run automatically on every push and pull request to `main`:
+
+### CI — Build & Test
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml)
+
+- Runs on **ubuntu-latest**, Java 21, H2 in-memory (no MySQL needed)
+- Redis 7 service available at localhost:6379
+- Command: `mvn test -Dspring.profiles.active=local`
+- **Pass criteria: 84 tests, 0 failures, BUILD SUCCESS**
+
+### Demo E2E — devos_chat Instruction Cycle
+
+[`.github/workflows/devos-demo-e2e.yml`](.github/workflows/devos-demo-e2e.yml)
+
+Proves the full kernel instruction cycle without any real LLM keys or Slack tokens:
+
+1. Starts backend (`local` profile — H2 + Redis)
+2. Waits for `GET /health` → 200
+3. Starts `devos_chat_worker` with `DEMO_MODE=true`
+4. `POST /devos/start` with test payload
+5. Polls `GET /action/{actionId}` until `status == COMPLETED`
+6. Asserts `result.response` contains `[DEMO]`
+7. Asserts `result.notepad` is non-empty
+
+Can also be triggered manually via `workflow_dispatch`.
+
+## E2E Proof (Local)
+
+Full instruction cycle validated locally:
+
+```
+POST /devos/start
+  {"text":"How do I reset a build?","slackThreadId":"CDEMO/1714500000.123456"}
+
+→ {"success":true,"data":{"actionId":1,"workflowId":1,"status":"QUEUED",...}}
+
+→ devos_chat_worker polls /action/poll?workerId=devos-worker-1
+→ DEMO stub executes (DEMO_MODE=true)
+→ POST /action/result  {"response":"[DEMO]...","notepad":"..."}
+→ Action status → SUCCEEDED → COMPLETED
+
+GET /action/1
+→ {"success":true,"data":{"status":"COMPLETED","result":{"response":"[DEMO]...","notepad":"..."}}}
+```
+
+**Verified**: 84 tests pass. Full E2E cycle completes in DEMO_MODE.
+
+## Roadmap
+
+See [docs/SCENARIO_MATRIX.md](docs/SCENARIO_MATRIX.md) for the full 7-stage kernel scenario matrix:
+
+- **Stage 0** (✅ Complete): Syscall, PCB, capability dispatch, worker, DEMO stub, notepad, local E2E
+- **Stage 1** (✅ Complete): GitHub Actions CI proof (mvn test + DEMO E2E)
+- **Stage 2** (Planned): Context restore under load — multi-turn sequential actions
+- **Stage 3** (Planned): Fault tolerance — watchdog, lease expiry, dead letter
+- **Stage 4** (Planned): Disk/page fault simulation — repo file search worker
+- **Stage 5** (Planned): Single-writer mutex — Git branch + Redis SETNX
+- **Stage 6** (Planned): Real Slack slash command + LLM keys
 
 ## Scope
 
