@@ -129,7 +129,9 @@ curl -X POST http://localhost:8080/devos/start \
 mvn test
 ```
 
-**Verified result: 108 tests, 0 failures, BUILD SUCCESS**
+**Verified result: 108 Java tests, 0 failures, BUILD SUCCESS**
+
+Python tests: 21 total (7 `test_tool_manager.py` + 14 `test_runtime_config.py`), 0 failures.
 
 The test suite runs entirely with H2 in-memory — no MySQL or Redis needed for tests.
 
@@ -149,6 +151,41 @@ DEMO_MODE=false
 > **Security**: Never commit real keys. `.env` is in `.gitignore`.
 
 LLM priority: `DEMO_MODE=true` (stub, highest) > `GLM_API_KEY` > `OPENAI_API_KEY`.
+
+## Production Mode (B-010)
+
+CI and all local E2E scripts always use `DEMO_MODE=true` — no real keys required.
+
+To run with a real LLM locally:
+
+```bash
+cp python-workers/devos_chat_worker/.env.example python-workers/devos_chat_worker/.env
+# Edit .env: set DEMO_MODE=false and fill GLM_API_KEY or OPENAI_API_KEY
+# Optionally: set SLACK_BOT_TOKEN for Slack write-back
+```
+
+Validate config before starting the worker (no real API calls made):
+
+```bash
+bash scripts/run_production_config_check.sh
+# Exit 0: config OK (DEMO or real key found)
+# Exit 1: DEMO_MODE=false and no LLM key — clear error message
+```
+
+**LLM backend selection**:
+
+| Condition | Backend |
+|---|---|
+| `DEMO_MODE=true` | `demo` (stub, highest priority) |
+| `DEMO_MODE=false` + `GLM_API_KEY` | `glm` |
+| `DEMO_MODE=false` + `OPENAI_API_KEY` | `openai` |
+| `DEMO_MODE=false` + no key | `RuntimeError` (fail fast on startup) |
+
+**Secret safety**:
+- Logs always show redacted key (`sk-a***`, `xoxb***`)
+- `REQUIRE_SLACK_POST=false` (default): missing token → skip Slack post, Action still SUCCEEDED
+- `REQUIRE_SLACK_POST=true`: missing token → RuntimeError
+- CI never has real secrets; `DEMO_MODE=true` is always explicitly set in CI/E2E scripts
 
 ## API Reference
 
@@ -297,8 +334,8 @@ See [docs/SCENARIO_MATRIX.md](docs/SCENARIO_MATRIX.md) for the full 7-stage kern
 - **Stage 3** (✅ Complete): Fault tolerance — Watchdog/Lease/Retry (B-002, 3 tests) + User Interrupt B-003 (4 tests) + DAG acyclicity B-004 (4 tests: `wouldCreateCycle` BFS, linear chain unlock, direct/indirect cycle detection)
 - **Stage 4** (✅ Complete): Disk/Page Fault — `repoPath`+`filePath` payload 透传，`safe_read_repo_file` 安全校验，[PAGE_IN] marker 注入，[page-in] notepad 记录；2 集成测试 + Page Fault E2E PASSED
 - **Stage 5** (✅ Complete): Single-writer mutex — `writeIntent`/`workspaceKey`, Redis SETNX, 4 tests (`DevOsWorkspaceMutexTest`)
-- **Stage 6** (✅ Partial): Tool Manager — `ToolCall`/`ToolResponse`/`ToolManager`, whitelist `{repo.read_file}`, Page Fault → `TOOL_MANAGER.execute()`, 7 Python smoke tests
-- **Stage 6** (Planned): Real Slack slash command + LLM keys (B-007 RBAC, B-010 real keys)
+- **Stage 6** (✅ Partial): Tool Manager — `ToolCall`/`ToolResponse`/`ToolManager`, whitelist `{repo.read_file}`, Page Fault → `TOOL_MANAGER.execute()`, 7 Python smoke tests; Ownership Guard — `slackThreadId` scope boundary, cross-thread 403, 4 Java integration tests; Production Config (B-010) — `select_llm_backend()`, `validate_runtime_config()`, `redact_secret()`, 14 Python tests, dry-run config check script
+- **Stage 6** (🔶 Partial): Real Slack slash command + LLM keys — B-010 production config boundary done (14 Python tests, dry-run script, .env.example); live Slack/LLM integration not yet wired in CI
 
 ## Scope
 

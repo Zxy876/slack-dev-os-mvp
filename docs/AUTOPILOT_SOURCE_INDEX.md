@@ -59,7 +59,7 @@
 
 | 缺口                         | 说明                           | 追踪            |
 |------------------------------|--------------------------------|-----------------|
-| 真实 Slack Token / LLM Key   | 仅 DEMO_MODE 通过，生产需配置  | B-010           |
+| 真实 Slack Token / LLM Key   | 🔶 PARTIAL: config boundary + 14 Python tests + dry-run script; live key not in CI | B-010 ✓ |
 | 跨线程 notepad 隔离测试      | 见 ID-7                        | B-001           |
 
 ---

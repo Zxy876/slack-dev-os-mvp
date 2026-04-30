@@ -20,7 +20,7 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 | Single-writer mutex | Git branch workspace_snapshot + Redis SETNX | ✅ Stage 5 |
 | Tool Manager / Tool Call protocol | `ToolManager` whitelist + `repo.read_file` | ✅ Stage 6 |
 | Access Control / Ownership Guard | `slackThreadId` scope boundary; cross-thread 403 | ✅ Stage 6 |
-| Real syscall (Slack + LLM) | Slack slash command + chat.postMessage | ⏳ Stage 6 |
+| Real syscall (Slack + LLM) | Slack slash command + chat.postMessage | 🔶 Stage 6 (config ready, not live) |
 
 ---
 
@@ -349,6 +349,49 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 
 ---
 
+## Stage 6 — Production Config Readiness / B-010 (PARTIAL)
+
+**Goal**: Enable safe local switch to production-like mode: real Slack Bot Token / GLM / OpenAI key via env; CI and default local tests always use DEMO_MODE, no real secrets required.
+
+**What was done (config boundary, not live integration)**:
+- `select_llm_backend()`: DEMO → GLM → OpenAI → RuntimeError (fail fast)
+- `validate_runtime_config()`: startup config summary with redacted secrets
+- `redact_secret()`: first 4 chars + `***`, prevents key leak in logs
+- `REQUIRE_SLACK_POST` flag: false (skip) or true (fail fast on missing token)
+- `main()` logs config on start, raises RuntimeError if no LLM backend
+- `.env.example`: complete template with DEMO_MODE=true default + comments
+- `scripts/run_production_config_check.sh`: dry-run config validator (exit 0/1)
+
+**Not done (intentional)**:
+- No real Slack API calls in CI
+- No real LLM calls in CI
+- No OAuth, no public webhook, no deployment
+
+### Scenario 6.4 — LLM Backend Selection
+
+| Input | Expected Backend |
+|---|---|
+| `DEMO_MODE=true` (any keys) | `demo` |
+| `DEMO_MODE=false` + `GLM_API_KEY` | `glm` |
+| `DEMO_MODE=false` + `OPENAI_API_KEY` | `openai` |
+| `DEMO_MODE=false` + no key | `RuntimeError` (fail fast) |
+| `GLM_API_KEY` + `OPENAI_API_KEY` | `glm` (GLM has higher priority) |
+
+### Scenario 6.5 — Secret Safety
+
+| Check | Invariant |
+|---|---|
+| `redact_secret("sk-abc123")` | Returns `sk-a***`, never full key |
+| `SLACK_BOT_TOKEN` missing, `REQUIRE_SLACK_POST=false` | `post_to_slack()` returns `False`, no exception |
+| `SLACK_BOT_TOKEN` missing, `REQUIRE_SLACK_POST=true` | `post_to_slack()` raises `RuntimeError` |
+| CI / E2E scripts | Always `DEMO_MODE=true`, always `unset OPENAI_API_KEY GLM_API_KEY` |
+
+**Tests**: `python-workers/devos_chat_worker/test_runtime_config.py` (14 pytest cases: A–F + config summary).
+
+**Config check script**: `scripts/run_production_config_check.sh` — exit 0 on DEMO_MODE, exit 1 on missing key.
+
+---
+
 ## Status Summary
 
 | Stage | Name | Status | CI Proof |
@@ -360,4 +403,5 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 | 4 | Disk / Page Fault Simulation | ✅ Complete | GHA E2E Round 3 |
 | 5 | Single-Writer Mutex | ✅ Complete | 104 tests |
 | 6 | Tool Manager (minimal) | ✅ Complete | 7 Python smoke tests + GHA |
-| 6 | Real Slack + LLM | ⏳ Planned | — |
+| 6 | Real Slack + LLM | 🔶 PARTIAL | config + tests; no live key in CI |
+| 6 | Production Config Readiness (B-010) | ✅ Complete | `test_runtime_config.py` (14 tests) + config check script |

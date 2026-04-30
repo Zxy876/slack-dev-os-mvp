@@ -57,6 +57,88 @@ POLL_INTERVAL_S: float = float(os.environ.get("POLL_INTERVAL_S", "2"))
 HEARTBEAT_INTERVAL_S: float = float(os.environ.get("HEARTBEAT_INTERVAL_S", "10"))
 DEMO_MODE: bool = os.environ.get("DEMO_MODE", "").lower() in ("1", "true", "yes")
 
+
+# ─────────────────────────────────────────────────────────────
+# B-010 — Production Mode Config Helpers
+# ─────────────────────────────────────────────────────────────
+
+def redact_secret(value: str) -> str:
+    """遮掩 secret 值：保留前 4 字符，其余替换为 ***。"""
+    if not value:
+        return "(not set)"
+    if len(value) <= 4:
+        return "***"
+    return value[:4] + "***"
+
+
+def is_demo_mode() -> bool:
+    """返回 True 当且仅当环境变量 DEMO_MODE 设为 true/1/yes。"""
+    return os.environ.get("DEMO_MODE", "").lower() in ("1", "true", "yes")
+
+
+def select_llm_backend() -> str:
+    """
+    确定当前应使用的 LLM 后端。
+
+    优先级（从高到低）：
+      1. DEMO_MODE=true              → "demo"  （始终优先，无需真实 key）
+      2. GLM_API_KEY 存在            → "glm"
+      3. OPENAI_API_KEY 存在         → "openai"
+      4. 无任何 key                  → RuntimeError（fail fast）
+
+    返回: "demo" | "glm" | "openai"
+    抛出: RuntimeError — DEMO_MODE=false 且无任何 LLM key
+    """
+    if is_demo_mode():
+        return "demo"
+    if os.environ.get("GLM_API_KEY"):
+        return "glm"
+    if os.environ.get("OPENAI_API_KEY"):
+        return "openai"
+    raise RuntimeError(
+        "No LLM backend available: DEMO_MODE is not set and neither "
+        "GLM_API_KEY nor OPENAI_API_KEY is configured. "
+        "Set DEMO_MODE=true for local/CI testing, or provide a real LLM API key."
+    )
+
+
+def validate_runtime_config() -> dict:
+    """
+    验证并汇总当前运行时配置（不抛异常，调用方检查 llm_ok）。
+
+    返回 config dict，字段：
+      asyncaiflow_url, worker_id, demo_mode, llm_backend, llm_ok,
+      llm_error, slack_token_redacted, slack_webhook_redacted,
+      require_slack_post, slack_ok
+    """
+    try:
+        backend = select_llm_backend()
+        llm_ok = True
+        llm_error = None
+    except RuntimeError as exc:
+        backend = "missing"
+        llm_ok = False
+        llm_error = str(exc)
+
+    slack_token = os.environ.get("SLACK_BOT_TOKEN", "")
+    slack_webhook = os.environ.get("SLACK_WEBHOOK_URL", "")
+    require_slack = os.environ.get("REQUIRE_SLACK_POST", "false").lower() in ("1", "true", "yes")
+    slack_ok = bool(slack_token or slack_webhook) or not require_slack
+
+    return {
+        "asyncaiflow_url": ASYNCAIFLOW_URL,
+        "worker_id": WORKER_ID,
+        "demo_mode": is_demo_mode(),
+        "llm_backend": backend,
+        "llm_ok": llm_ok,
+        "llm_error": llm_error,
+        "slack_token_redacted": redact_secret(slack_token),
+        "slack_webhook_redacted": redact_secret(slack_webhook),
+        "require_slack_post": require_slack,
+        "slack_ok": slack_ok,
+    }
+
+
 SYSTEM_PROMPT = """You are a world-class software engineering assistant in the Slack Dev OS.
 You help developers by directly answering questions, writing code, designing solutions,
 and providing actionable technical guidance.
@@ -397,7 +479,13 @@ def post_to_slack(slack_thread_id: str, text: str) -> bool:
       "<channel_id>"              （仅 channel，不在 thread 中回复）
     """
     token = os.environ.get("SLACK_BOT_TOKEN", "")
+    require_slack = os.environ.get("REQUIRE_SLACK_POST", "false").lower() in ("1", "true", "yes")
     if not token:
+        if require_slack:
+            raise RuntimeError(
+                "REQUIRE_SLACK_POST=true but SLACK_BOT_TOKEN is not set. "
+                "Provide a valid Slack Bot Token or set REQUIRE_SLACK_POST=false."
+            )
         LOGGER.warning("SLACK_BOT_TOKEN not set — skipping Slack post for thread %s", slack_thread_id)
         return False
 
@@ -510,6 +598,21 @@ def execute(assignment: dict) -> tuple[str, dict, Optional[str]]:
 
 def main() -> None:
     LOGGER.info("Starting Slack Dev OS devos_chat worker (id=%s)", WORKER_ID)
+
+    # B-010: validate and log runtime config on startup; fail fast if LLM backend missing
+    config = validate_runtime_config()
+    LOGGER.info(
+        "[config] demo_mode=%s llm_backend=%s slack_token=%s slack_webhook=%s require_slack=%s",
+        config["demo_mode"],
+        config["llm_backend"],
+        config["slack_token_redacted"],
+        config["slack_webhook_redacted"],
+        config["require_slack_post"],
+    )
+    if not config["llm_ok"]:
+        LOGGER.error("[config] Fatal: %s", config["llm_error"])
+        raise RuntimeError(config["llm_error"])
+
     register_worker()
 
     next_heartbeat_at = 0.0

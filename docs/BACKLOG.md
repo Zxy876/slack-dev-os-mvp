@@ -19,7 +19,7 @@
 | B-007 | 14      | Stage 6 | 访问控制 / 权限隔离             | Workflow 粒度 RBAC；slackThreadId 绑定用户 scope                              | P4     | → ✅ DONE
 ~~| B-008 | 15      | Stage 6 | 工具管理器（Tool Manager）      | Worker 能力注册中心：动态加载 / 卸载 capability；工具调用结果回写 notepad     | P4     |~~ → ✅ DONE
 | B-009 | 8       | Stage 4 | 多层检索器（RAG）               | 实现向量检索 Worker；notepad 中附加检索结果                                   | P3     |
-| B-010 | 0       | Stage 6 | 真实 Slack Token + LLM Key     | 生产环境接入：Slack Event API + OpenAI/GLM 真实 key；消除 DEMO_MODE 依赖     | P4     |
+~~| B-010 | 0       | Stage 6 | 真实 Slack Token + LLM Key     | 生产环境接入：Slack Event API + OpenAI/GLM 真实 key；消除 DEMO_MODE 依赖     | P4     |~~ → 🔶 PARTIAL
 | B-011 | 17      | Stage 6 | 多模型异构调度                  | Worker 声明 `model_capability`；调度器按任务类型路由到不同 LLM 后端            | P4     |
 | B-012 | 10      | Stage 3 | 中断作为异步信号                | 中断信号走 Redis PubSub；Worker 轮询期间收到信号则提前退出并提交 FAILED 状态  | P3     |
 | B-013 | CI      | CI      | Flaky Test 稳定化              | `dispatchRespectsPerWorkflowParallelLimit` 在 GHA 中偶发失败；根因：`spring.task.scheduling.enabled=false` 不能阻止 `@Scheduled` bean 运行；修复：为 `SchedulerMaintenanceService` 加 `@ConditionalOnProperty` 使该属性真正生效 | P1     | → ✅ DONE
@@ -45,6 +45,7 @@
 | B-008 | Stage 6: Tool Manager（`ToolCall` / `ToolResponse` dataclasses；`ToolManager` 白名单注册表（WHITELIST={repo.read_file}）；Page Fault 路径改走 `TOOL_MANAGER.execute()`；未知工具返回 ok=False 不抛异常；`test_tool_manager.py`：7 pytest smoke tests（whitelist拒绝, 未知工具, 路径穿越, 绝对路径, 正常读取）；CI devos-demo-e2e.yml 新增 smoke test step） | commit `feat(stage6): B-008` — 2026-04-30 |
 | B-013 | CI: Flaky Test 稳定化（`SchedulerMaintenanceService` 加 `@ConditionalOnProperty(name="spring.task.scheduling.enabled", matchIfMissing=true)`，使所有测试类中的 `spring.task.scheduling.enabled=false` 真正阻止后台调度器运行；`dispatchRespectsPerWorkflowParallelLimit` 5 轮全绿） | commit `test(ci): B-013` — 2026-04-30 |
 | B-007 | Stage 6: slackThread Ownership Guard（`DevOsInterruptRequest` 新增 required `slackThreadId`；`DevOsService.resolveNotepadRef()` 加 thread 归属校验 — 跨 thread prevActionId → 403；`DevOsService.interrupt()` 加 thread 归属校验 — 跨 thread interrupt → 403；`ApiException.defaultCode()` 增 FORBIDDEN→ACCESS_DENIED；`DevOsAccessControlTest`：4 集成测试（A 同 thread notepad 继承, B 跨 thread notepad 被拒, C 同 thread interrupt, D 跨 thread interrupt 被拒）） | commit `feat(stage6): B-007` — 2026-04-30 |
+| B-010 | Stage 6: Production Config Readiness（PARTIAL — config boundary, not live integration）（`select_llm_backend()`：DEMO→GLM→OpenAI→RuntimeError；`validate_runtime_config()`：启动时配置汇总含遮掩 secret；`redact_secret()`：前4字符+***；`REQUIRE_SLACK_POST` 标志；`.env.example` 完整模板；`scripts/run_production_config_check.sh` 干跑验证；`test_runtime_config.py`：14 pytest cases（A~F + config summary）；不调用真实 Slack/LLM，不在 CI 注入 secret） | commit `feat(stage6): B-010` — 2026-04-30 |
 ---
 
 ## 里程碑映射
