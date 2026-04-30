@@ -216,6 +216,70 @@ bash scripts/run_production_config_check.sh
 - `REQUIRE_SLACK_POST=true`: missing token → RuntimeError
 - CI never has real secrets; `DEMO_MODE=true` is always explicitly set in CI/E2E scripts
 
+## Personal Slack Live Smoke (B-010-live-personal)
+
+This is a **local personal mode** only — not production, not CI. It lets you verify the end-to-end data flow with your own Slack workspace and LLM key.
+
+**Data flow:**
+```
+curl POST /devos/start { text, slackThreadId }
+→ AsyncAIFlow creates Action
+→ devos_chat_worker polls action
+→ calls real LLM (GLM or OpenAI)
+→ posts response to your Slack channel/thread
+→ Action COMPLETED
+```
+
+### Prerequisites
+
+1. **Create a Slack App** at https://api.slack.com/apps  
+   Add OAuth scope: `chat:write`  
+   Install to your workspace → copy the **Bot User OAuth Token** (`xoxb-...`)
+
+2. **Find your channel/thread ID**  
+   - Channel ID: in Slack, open channel details → copy the ID at the bottom (e.g. `C08XXXXXX`)  
+   - Thread ID format: `C08XXXXXX/1714500000.123456`  
+     Right-click a message → "Copy link" → extract timestamp from URL
+
+3. **LLM key**: `GLM_API_KEY` or `OPENAI_API_KEY` (or use `DEMO_MODE=true` for stub)
+
+### Setup
+
+```bash
+# Create your local .env (never committed)
+cp python-workers/devos_chat_worker/.env.example python-workers/devos_chat_worker/.env
+
+# Edit .env with your real values:
+#   DEMO_MODE=false
+#   GLM_API_KEY=<your-key>           # or OPENAI_API_KEY
+#   SLACK_BOT_TOKEN=xoxb-...
+#   DEVOS_LIVE_SLACK_THREAD_ID=C08XXXXXX/1714500000.123456
+#   (or DEVOS_LIVE_SLACK_CHANNEL=C08XXXXXX for top-level post)
+
+source python-workers/devos_chat_worker/.env
+```
+
+### Run
+
+```bash
+# Terminal 1: start backend (Redis must be running)
+mvn spring-boot:run -Dspring-boot.run.profiles=local
+
+# Terminal 2: start worker
+cd python-workers/devos_chat_worker
+source .env
+python worker.py
+
+# Terminal 3: run live smoke
+source python-workers/devos_chat_worker/.env
+bash scripts/run_slack_live_smoke.sh
+```
+
+After the smoke passes, check your Slack channel — the LLM response should appear.
+
+> **CI never runs live smoke.** CI always uses `DEMO_MODE=true` with no real secrets.  
+> **Never commit your `.env` file.** It is in `.gitignore`.
+
 ## API Reference
 
 ### POST /devos/start
