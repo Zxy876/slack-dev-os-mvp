@@ -83,25 +83,48 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 
 ---
 
-## Stage 2 — Context Restore Under Load (PLANNED)
+## Stage 2 — Context Restore Under Load (COMPLETED)
 
 **Goal**: Validate PCB context restore across multiple sequential instruction cycles.
 
-### Scenario 2.1 — Sequential Retry with notepad_ref Injection
+**Validation**: ✅ Local E2E two-round PASSED. 3 integration tests all PASS. 87 tests, BUILD SUCCESS.
+
+### Scenario 2.1 — Sequential Notepad Propagation (prevActionId)
 
 | Step | Expected |
 |---|---|
-| Action 1 completes with notepad="User asked about build reset" | `notepad_ref` saved to DB |
-| Action 2 created for same slackThreadId | Worker receives `notepad_ref` in poll response |
-| Action 2 payload includes prior notepad | LLM system prompt includes context from Action 1 |
-| Validation | Action 2 result references prior context |
+| Action 1 completes with notepad | `notepad_ref` saved to ActionEntity via `extractNotepadFromResult()` |
+| POST /devos/start with `prevActionId=Action1.id` | `DevOsService.resolveNotepadRef()` reads Action 1 notepad_ref, writes to new PCB |
+| Worker polls Action 2 | `ActionAssignmentResponse.notepadRef` == Action 1's notepad |
+| `call_llm()` with notepad (retry=0) | Context Restore injected into LLM prompt (retry guard removed) |
+| DEMO stub response | Contains `[Notepad context was present]` |
+
+**Test**: `DevOsContextRestoreTest.testNotepadPropagatesAcrossSequentialActions` ✅
 
 ### Scenario 2.2 — Context Switch Isolation
 
 | Step | Expected |
 |---|---|
 | Two concurrent slackThreadIds active | Each PCB carries its own `notepad_ref` |
-| Workers process both independently | No cross-contamination of notepad state |
+| T-BETA started with no prevActionId | `notepadRef == null` in poll response |
+| T-ALPHA notepad unaffected after T-BETA completes | No cross-contamination |
+
+**Test**: `DevOsContextRestoreTest.testNotepadIsolatedAcrossThreads` ✅
+
+### Scenario 2.3 — prevActionId Not Found Fallback
+
+| Step | Expected |
+|---|---|
+| POST /devos/start with `prevActionId=999999999` (non-existent) | `resolveNotepadRef()` returns null gracefully |
+| New Action PCB | `notepad_ref = null`, no error |
+
+**Test**: `DevOsContextRestoreTest.testPrevActionIdNotFoundFallsBackToNull` ✅
+
+### GHA Workflow Update
+
+- `.github/workflows/devos-demo-e2e.yml` extended with Round 2 (Context Restore) steps
+- Worker started with `env -u OPENAI_API_KEY -u GLM_API_KEY ... DEMO_MODE=true` to ensure DEMO_MODE priority
+- DEMO_MODE now takes priority over LLM keys in `call_llm()` (worker.py fix)
 
 ---
 

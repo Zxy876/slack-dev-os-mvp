@@ -53,7 +53,8 @@ POST /devos/start
 - `devos_chat` capability routing (via `asyncaiflow.dispatch.capability-mapping`)
 - `devos_chat` Python Worker (LLM + Slack integration)
 - Minimal notepad persistence for context restore on retry
-- Full test suite passing: **84 tests, 0 failures, BUILD SUCCESS**
+- **Stage 2: Context Restore** — `prevActionId` field propagates notepad across sequential Actions
+- Full test suite passing: **87 tests, 0 failures, BUILD SUCCESS**
 
 ## Architecture Overview
 
@@ -121,7 +122,7 @@ curl -X POST http://localhost:8080/devos/start \
 mvn test
 ```
 
-**Verified result: 84 tests, 0 failures, BUILD SUCCESS**
+**Verified result: 87 tests, 0 failures, BUILD SUCCESS**
 
 The test suite runs entirely with H2 in-memory — no MySQL or Redis needed for tests.
 
@@ -140,7 +141,7 @@ DEMO_MODE=false
 
 > **Security**: Never commit real keys. `.env` is in `.gitignore`.
 
-LLM priority: `GLM_API_KEY` > `OPENAI_API_KEY` > `DEMO_MODE=true` (stub response).
+LLM priority: `DEMO_MODE=true` (stub, highest) > `GLM_API_KEY` > `OPENAI_API_KEY`.
 
 ## API Reference
 
@@ -150,9 +151,12 @@ LLM priority: `GLM_API_KEY` > `OPENAI_API_KEY` > `DEMO_MODE=true` (stub response
 ```json
 {
   "text": "user message text",
-  "slackThreadId": "C08XXXXXX/1234567890.123456"
+  "slackThreadId": "C08XXXXXX/1234567890.123456",
+  "prevActionId": 42
 }
 ```
+
+> `prevActionId` is optional. When provided, the new Action inherits the notepad_ref from the referenced Action (Stage 2 Context Restore).
 
 **Response:**
 ```json
@@ -176,6 +180,11 @@ Two workflows run automatically on every push and pull request to `main`.
 > **Phase 2 CI proof — both workflows passed on commit `6e5bb8c`**
 > - CI run: https://github.com/Zxy876/slack-dev-os-mvp/actions/runs/25157666547
 > - Demo E2E run: https://github.com/Zxy876/slack-dev-os-mvp/actions/runs/25157666524
+
+> **Stage 2 Context Restore — local E2E verified (2026-04-30)**
+> - `POST /devos/start { prevActionId }` → notepad propagated across sequential Actions
+> - 3 integration tests: `DevOsContextRestoreTest` (all PASS)
+> - GHA `devos-demo-e2e.yml` extended with Round 2 (Context Restore) verification
 
 ### CI — Build & Test
 

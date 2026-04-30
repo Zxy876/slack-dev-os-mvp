@@ -18,7 +18,7 @@
 | 4   | ARC     | Redis 能力队列（就绪队列）       | ✅ DONE | `ActionQueueService.enqueue()` key=devos_chat| —                                |
 | 5   | MODEL   | PCB 完整字段集                   | ✅ DONE | 见 ID-5 详细记录                             | —                                |
 | 6   | MODEL   | 7 状态机（含 DEAD_LETTER）       | ✅ DONE | `ActionStatus.java` enum + isValidTransition | —                                |
-| 7   | MODEL   | Context Switch / Notepad 恢复   | 🔶 PARTIAL | `worker.py` + `notepad_ref` in ActionEntity | 缺跨线程隔离测试 → B-001         |
+| 7   | MODEL   | Context Switch / Notepad 恢复   | ✅ DONE    | `DevOsContextRestoreTest`：testNotepadPropagatesAcrossSequentialActions, testNotepadIsolatedAcrossThreads, testPrevActionIdNotFoundFallsBackToNull; `worker.py` notepad 注入修复; `DevOsService.resolveNotepadRef()` | —    |
 | 8   | ARC     | 多层检索器（工具调用 / RAG）     | ⏳ DEFERRED | — | Stage 4 → B-009                  |
 | 9   | ARC     | Watchdog 超时回收                | 🔶 PARTIAL | `ActionService.reclaimExpiredLeases()` + `SchedulerReliabilityIntegrationTest` | E2E 场景待 → B-002 |
 | 10  | Q26     | 用户中断信号（Interrupt Signal） | ⏳ DEFERRED | — | Stage 3 → B-003                  |
@@ -29,7 +29,7 @@
 | 15  | Q26     | 工具管理器（Tool Manager）       | ⏳ DEFERRED | — | Stage 6 → B-008                  |
 | 16  | MODEL   | notepad_ref 持久化与注入         | ✅ DONE | `extractNotepadFromResult()` + `notepadRef` in poll response | —  |
 | 17  | Q26     | 多模型异构调度                   | ⏳ DEFERRED | — | Stage 6 → B-011                  |
-| 18  | ARC     | 顺序指令周期完整性验证           | 🔶 PARTIAL | E2E CI 验证单轮；双轮顺序 notepad 恢复待测 | Stage 2 → B-001 |
+| 18  | ARC     | 顺序指令周期完整性验证           | ✅ DONE    | E2E 双轮（Round 1 + Round 2 prevActionId）均通过；`DevOsContextRestoreTest`（3 tests）；87 tests BUILD SUCCESS | — |
 | 19  | ARC     | BLOCKED → QUEUED 依赖解锁        | ✅ DONE | `ActionService.unblockDownstreamActions()` + isValidTransition(BLOCKED→QUEUED) | — |
 | 20  | MODEL   | Lease 字段集（PCB 可靠性字段）   | ✅ DONE | `lease_expire_at`, `retry_count`, `backoff_seconds`, `last_reclaim_reason` in schema | — |
 

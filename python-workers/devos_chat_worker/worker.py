@@ -195,20 +195,23 @@ def _call_glm(user_text: str, notepad: Optional[str]) -> str:
 
 def call_llm(user_text: str, notepad: Optional[str]) -> str:
     """
-    LLM 调度：GLM > OpenAI > Demo Stub
+    LLM 调度：DEMO_MODE > GLM > OpenAI
     对应 OS 中"CPU 执行指令"环节。
+
+    DEMO_MODE 优先：若显式设置 DEMO_MODE=true，无论是否有 LLM key，
+    均使用 stub 响应（保证 CI/E2E 完全可控）。
     """
-    if os.environ.get("GLM_API_KEY"):
-        return _call_glm(user_text, notepad)
-    if os.environ.get("OPENAI_API_KEY"):
-        return _call_openai(user_text, notepad)
     if DEMO_MODE:
-        LOGGER.warning("DEMO_MODE: No LLM key set — returning stub response")
+        LOGGER.warning("DEMO_MODE: returning stub response")
         retry_note = f"\n[Notepad context was present]" if notepad else ""
         return (
             f"[DEMO] I received your request: \"{user_text[:100]}\"\n"
             f"This is a demo stub response from Slack Dev OS worker.{retry_note}"
         )
+    if os.environ.get("GLM_API_KEY"):
+        return _call_glm(user_text, notepad)
+    if os.environ.get("OPENAI_API_KEY"):
+        return _call_openai(user_text, notepad)
     raise RuntimeError(
         "No LLM API key configured. Set OPENAI_API_KEY, GLM_API_KEY, or DEMO_MODE=true."
     )
@@ -300,13 +303,13 @@ def execute(assignment: dict) -> tuple[str, dict, Optional[str]]:
     )
 
     # --- L1 Thinking Loop: 构建提示词 ---
-    if retry_count > 0 and notepad:
-        # Context Restore：将上次执行快照注入提示，打破幻觉循环
-        LOGGER.info("Context Restore: injecting notepad into prompt for retry %d", retry_count)
+    if notepad:
+        # Context Restore：notepad 来自 prevActionId 继承或 retry 快照，均注入提示
+        LOGGER.info("Context Restore: injecting notepad into prompt (retry=%d)", retry_count)
 
-    # --- CPU 执行：调用 LLM ---
+    # --- CPU 执行：调用 LLM（notepad 若存在则始终注入，支持顺序周期恢复）---
     try:
-        llm_response = call_llm(user_text, notepad if retry_count > 0 else None)
+        llm_response = call_llm(user_text, notepad)
     except Exception as exc:
         LOGGER.error("LLM call failed for action %s: %s", action_id, exc)
         return "FAILED", {}, str(exc)

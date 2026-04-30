@@ -1,4 +1,4 @@
-name: Demo E2E — devos_chat Instruction Cycle
+name: Demo E2E — devos_chat Instruction Cycle + Context Restore
 
 on:
   push:
@@ -69,11 +69,12 @@ jobs:
 
       - name: Start devos_chat worker (DEMO_MODE)
         run: |
-          ASYNCAIFLOW_URL=http://localhost:8080 \
-          DEVOS_WORKER_ID=devos-worker-ci \
-          DEMO_MODE=true \
-          POLL_INTERVAL_S=1.0 \
-          python python-workers/devos_chat_worker/worker.py > worker.log 2>&1 &
+          env -u OPENAI_API_KEY -u GLM_API_KEY \
+            ASYNCAIFLOW_URL=http://localhost:8080 \
+            DEVOS_WORKER_ID=devos-worker-ci \
+            DEMO_MODE=true \
+            POLL_INTERVAL_S=1.0 \
+            python python-workers/devos_chat_worker/worker.py > worker.log 2>&1 &
           echo "Worker started (PID $!)..."
           sleep 3
 
@@ -149,12 +150,101 @@ jobs:
 
           echo ""
           echo "==================================================="
-          echo " E2E PASSED: Full kernel instruction cycle verified"
+          echo " Round 1 PASSED: Full kernel instruction cycle"
           echo "   POST /devos/start → QUEUED"
           echo "   devos_chat_worker → DEMO stub → SUCCEEDED"
           echo "   GET /action/{id}  → COMPLETED"
           echo "   result.response   → [DEMO] ✓"
           echo "   result.notepad    → present ✓"
+          echo "==================================================="
+
+      # ── Stage 2: Context Restore Round 2 ──────────────────────────────────
+
+      - name: POST /devos/start — Round 2 (Context Restore, prevActionId)
+        id: start2
+        run: |
+          ACTION_ID1=${{ steps.start.outputs.action_id }}
+          RESPONSE2=$(curl -s -X POST http://localhost:8080/devos/start \
+            -H "Content-Type: application/json" \
+            -d "{\"text\":\"Now follow up on the previous step\",\"slackThreadId\":\"CDEMO/1714500000.123456\",\"prevActionId\":${ACTION_ID1}}")
+          echo "POST /devos/start Round 2 response: $RESPONSE2"
+          ACTION_ID2=$(echo "$RESPONSE2" | jq -r '.data.actionId')
+          if [ -z "$ACTION_ID2" ] || [ "$ACTION_ID2" = "null" ]; then
+            echo "FAIL: could not extract actionId from Round 2 response"
+            exit 1
+          fi
+          echo "action_id2=$ACTION_ID2" >> "$GITHUB_OUTPUT"
+          echo "Action ID2: $ACTION_ID2"
+
+      - name: Poll GET /action/{id2} until COMPLETED — Round 2 (max 120s)
+        run: |
+          ACTION_ID=${{ steps.start2.outputs.action_id2 }}
+          for i in $(seq 1 60); do
+            RESULT=$(curl -s "http://localhost:8080/action/${ACTION_ID}")
+            STATUS=$(echo "$RESULT" | jq -r '.data.status // "UNKNOWN"')
+            echo "[$i] Round2 status=$STATUS"
+            if [ "$STATUS" = "COMPLETED" ]; then
+              echo "Round 2 Action reached COMPLETED"
+              break
+            fi
+            if [ "$STATUS" = "FAILED" ]; then
+              echo "FAIL: Round 2 action status is FAILED"
+              echo "$RESULT" | jq .
+              exit 1
+            fi
+            if [ "$i" = "60" ]; then
+              echo "FAIL: timed out after 120s waiting for Round 2 COMPLETED"
+              echo "$RESULT" | jq .
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Assert Round 2 — Context Restore verified
+        run: |
+          ACTION_ID=${{ steps.start2.outputs.action_id2 }}
+          RESULT=$(curl -s "http://localhost:8080/action/${ACTION_ID}")
+          RESPONSE_TEXT=$(echo "$RESULT" | jq -r '.data.result.response // ""')
+          NOTEPAD=$(echo "$RESULT" | jq -r '.data.result.notepad // ""')
+
+          echo "Round 2 response: $RESPONSE_TEXT"
+          echo "Round 2 notepad:  $NOTEPAD"
+
+          PASSED=true
+          if echo "$RESPONSE_TEXT" | grep -q "\[DEMO\]"; then
+            echo "PASS: Round 2 response contains [DEMO]"
+          else
+            echo "FAIL: Round 2 response does not contain [DEMO]"
+            PASSED=false
+          fi
+
+          if echo "$RESPONSE_TEXT" | grep -q "\[Notepad context was present\]"; then
+            echo "PASS: Round 2 response contains [Notepad context was present] — Context Restore verified"
+          else
+            echo "FAIL: Round 2 response missing [Notepad context was present]"
+            PASSED=false
+          fi
+
+          if [ -n "$NOTEPAD" ]; then
+            echo "PASS: Round 2 notepad present"
+          else
+            echo "FAIL: Round 2 notepad empty"
+            PASSED=false
+          fi
+
+          if [ "$PASSED" = "false" ]; then
+            echo "=== Full Round 2 result ==="
+            echo "$RESULT" | jq .
+            exit 1
+          fi
+
+          echo ""
+          echo "==================================================="
+          echo " E2E PASSED: Stage 2 Context Restore verified"
+          echo "   [Round 1] POST /devos/start → COMPLETED ✓"
+          echo "   [Round 2] POST /devos/start (prevActionId) → COMPLETED ✓"
+          echo "   [Round 2] [Notepad context was present] ✓"
+          echo "   Stage 2 Context Restore: DONE ✓"
           echo "==================================================="
 
       - name: Print logs on failure

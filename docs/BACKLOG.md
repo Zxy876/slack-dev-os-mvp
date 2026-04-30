@@ -10,7 +10,7 @@
 
 | 编号  | 来源 ID | 阶段    | 标题                            | 说明                                                                        | 优先级 |
 |-------|---------|---------|-------------------------------|-----------------------------------------------------------------------------|--------|
-| B-001 | 7, 18   | Stage 2 | Context Restore 隔离集成测试   | 验证：同 slackThreadId 的 Action N 能拿到 N-1 的 notepad；不同 Thread 不互污 | P1     |
+~~| B-001 | 7, 18   | Stage 2 | Context Restore 隔离集成测试   | 验证：同 slackThreadId 的 Action N 能拿到 N-1 的 notepad；不同 Thread 不互污 | P1     |~~ → ✅ DONE
 | B-002 | 9       | Stage 3 | Watchdog E2E 场景测试          | 用 `SchedulerReliabilityIntegrationTest` 框架，验证 lease 超时 → RETRY_WAIT → 重跑 | P2     |
 | B-003 | 10      | Stage 3 | 用户中断信号（Interrupt Signal）| 设计并实现 `POST /devos/interrupt`：将 RUNNING Action 标记为 FAILED，触发 Interrupt Handler | P2     |
 | B-004 | 11      | Stage 3 | DAG 环检测                     | `validateUpstreamActions()` 应检测有向环（A→B→A）并返回 400                  | P2     |
@@ -35,6 +35,7 @@
 | —     | 7 状态机 + isValidTransition      | ActionService.java |
 | —     | BLOCKED→QUEUED DAG 解锁           | unblockDownstreamActions() |
 | —     | notepad_ref 持久化 + 下发 Worker  | extractNotepadFromResult() |
+| B-001 | Stage 2: Context Restore（prevActionId + 3 集成测试 + E2E 双轮） | commit `feat(stage2)` — 2026-04-30 |
 
 ---
 

@@ -8,6 +8,24 @@
 
 ---
 
+## ✅ Implementation Status: COMPLETE（2026-04-30）
+
+**所有验收条件已满足**：
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| `prevActionId` 字段（optional） | `DevOsStartRequest.java` | 请求 DTO 新增 Long 字段，无 @NotNull |
+| `resolveNotepadRef()` 方法 | `DevOsService.java` | 查询 prevActionId 的 notepad_ref，写入新 PCB |
+| notepad 注入修复（retry guard 移除） | `worker.py` | retry=0 时也正确注入 notepad（prevActionId 场景） |
+| DEMO_MODE 优先级修复 | `worker.py` | DEMO_MODE 优先于 GLM/OpenAI key — E2E 稳定性保证 |
+| E2E 脚本双轮验证 | `scripts/run_demo_e2e.sh` | Round 2 使用 prevActionId，断言 `[Notepad context was present]` |
+| GHA 工作流扩展 | `.github/workflows/devos-demo-e2e.yml` | Round 2 步骤 + `env -u` 屏蔽 LLM key |
+| 3 个集成测试全通过 | `DevOsContextRestoreTest.java` | testNotepadPropagatesAcrossSequentialActions ✅ testNotepadIsolatedAcrossThreads ✅ testPrevActionIdNotFoundFallsBackToNull ✅ |
+| 本地 E2E 全通过 | `run_demo_e2e.sh` | EXIT 0 — 两轮均含 `[DEMO]` 和 `[Notepad context was present]` |
+| 总测试数 | 87 tests BUILD SUCCESS | — |
+
+---
+
 ## 背景
 
 当前已实现（Stage 0/1）：
