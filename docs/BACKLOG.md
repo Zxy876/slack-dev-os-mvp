@@ -24,7 +24,7 @@
 | B-012 | 10      | Stage 3 | 中断作为异步信号                | 中断信号走 Redis PubSub；Worker 轮询期间收到信号则提前退出并提交 FAILED 状态  | P3     |
 ~~| B-014 | RELEASE | RC      | Release Candidate Audit / v0.1.0-rc1 | 整理 README、RELEASE_NOTES、SECURITY_CHECKLIST、secret_scan.sh；打 tag v0.1.0-rc1；不新增功能 | P1     |~~ → ✅ DONE
 ~~| B-015 | RELEASE | RC      | RC Final Verification / v0.1.0-rc2   | 确认 tag + Actions 状态；修正 SECURITY_CHECKLIST S-010 过度声明；创建 GitHub prerelease v0.1.0-rc2 | P1     |~~ → ✅ DONE
-| B-010-live-personal | 0 | Stage 6 | Personal Slack Live Smoke | 本地真实 Slack Bot Token + LLM key live smoke；`run_slack_live_smoke.sh` + `test_slack_posting.py` (10 tests)；CI 不跑 live | P2 | → 🔶 READY / MANUAL_PENDING
+| B-010-live-personal | 0 | Stage 6 | Personal Slack Live Smoke | 本地真实 Slack Bot Token + LLM key live smoke；`run_slack_live_smoke.sh` + `test_slack_posting.py` (10 tests)；CI 不跑 live | P2 | → ✅ DONE (live smoke PASSED 2026-05-01)
 | B-013 | CI      | CI      | Flaky Test 稳定化              | `dispatchRespectsPerWorkflowParallelLimit` 在 GHA 中偶发失败；根因：`spring.task.scheduling.enabled=false` 不能阻止 `@Scheduled` bean 运行；修复：为 `SchedulerMaintenanceService` 加 `@ConditionalOnProperty` 使该属性真正生效 | P1     | → ✅ DONE
 
 ---
@@ -51,7 +51,7 @@
 | B-010 | Stage 6: Production Config Readiness（PARTIAL — config boundary, not live integration）（`select_llm_backend()`：DEMO→GLM→OpenAI→RuntimeError；`validate_runtime_config()`：启动时配置汇总含遮掩 secret；`redact_secret()`：前4字符+***；`REQUIRE_SLACK_POST` 标志；`.env.example` 完整模板；`scripts/run_production_config_check.sh` 干跑验证；`test_runtime_config.py`：14 pytest cases（A~F + config summary）；不调用真实 Slack/LLM，不在 CI 注入 secret） | commit `feat(stage6): B-010` — 2026-04-30 |
 | B-014 | Release Candidate Audit（`RELEASE_NOTES.md`、`docs/SECURITY_CHECKLIST.md`、`scripts/secret_scan.sh`；README 加 Quickstart / RC Status / CI coverage 说明；BACKLOG/SCENARIO_MATRIX/README 一致性审计通过；108 Java + 21 Python tests，E2E x2 全绿，secret scan PASS；tag `v0.1.0-rc1` 推送） | commit `docs(release): B-014` — 2026-04-30 |
 | B-015 | RC Final Verification（核查 tag `v0.1.0-rc1` 指向正确 commit `c0f8aa1`；CI + Demo E2E 全绿；修正 SECURITY_CHECKLIST S-010 "No known CVEs" 过度声明 → ⚠️ PENDING（pip-audit 未运行）；文档修正 → 新建 tag `v0.1.0-rc2` 指向修正后 commit；创建 GitHub prerelease `v0.1.0-rc2`） | commit `docs(release): B-015` — 2026-05-01 |
-| B-010-live-personal | Personal Slack Live Smoke — READY / MANUAL PENDING（`scripts/run_slack_live_smoke.sh`：preflight检查 + config dry-run + backend health + curl /devos/start + poll until COMPLETED；`test_slack_posting.py`：10 mock tests（channel解析, thread_ts解析, missing token行为, Slack API error, token不泄漏）；`.env.example` 新增 DEVOS_LIVE_SLACK_THREAD_ID / DEVOS_LIVE_SLACK_CHANNEL；README 新增 Personal Slack Live Smoke 章节；CI 不跑 live smoke；无真实 token 提交；**manual live run pending**） | commit `feat(stage6): B-010-live` — 2026-05-01 |
+| B-010-live-personal | Personal Slack Live Smoke — ✅ DONE（`scripts/run_slack_live_smoke.sh`：preflight检查 + config dry-run + backend health + curl /devos/start + poll until COMPLETED；`test_slack_posting.py`：10 mock tests（channel解析, thread_ts解析, missing token行为, Slack API error, token不泄漏）；`.env.example` 新增 DEVOS_LIVE_SLACK_THREAD_ID / DEVOS_LIVE_SLACK_CHANNEL；README 新增 Personal Slack Live Smoke 章节；CI 不跑 live smoke；无真实 token 提交；**live smoke verified 2026-05-01: Action COMPLETED, Slack post sent to C0AV55H69QT**） | commit `feat(stage6): B-010-live` + `docs(stage6): B-010-live-personal DONE` — 2026-05-01 |
 ---
 
 ## 里程碑映射
