@@ -54,7 +54,10 @@ POST /devos/start
 - `devos_chat` Python Worker (LLM + Slack integration)
 - Minimal notepad persistence for context restore on retry
 - **Stage 2: Context Restore** — `prevActionId` field propagates notepad across sequential Actions
-- Full test suite passing: **94 tests, 0 failures, BUILD SUCCESS**
+- **Stage 3: Watchdog / Lease / Retry** — lease expiry reclaim, RETRY_WAIT backoff, DEAD_LETTER doom-loop prevention
+- **Stage 3: DAG Acyclicity** — BFS cycle detection rejects directed cycles in action dependency graph
+- **Stage 3: User Interrupt** — `POST /devos/interrupt` transitions any active Action to FAILED; terminal actions protected
+- Full test suite passing: **98 tests, 0 failures, BUILD SUCCESS**
 
 ## Architecture Overview
 
@@ -122,7 +125,7 @@ curl -X POST http://localhost:8080/devos/start \
 mvn test
 ```
 
-**Verified result: 94 tests, 0 failures, BUILD SUCCESS**
+**Verified result: 98 tests, 0 failures, BUILD SUCCESS**
 
 The test suite runs entirely with H2 in-memory — no MySQL or Redis needed for tests.
 
@@ -172,6 +175,41 @@ LLM priority: `DEMO_MODE=true` (stub, highest) > `GLM_API_KEY` > `OPENAI_API_KEY
 ```
 
 `slackThreadId` format: `<channel_id>/<thread_ts>` (e.g. `C08ABC123/1714500000.000100`)
+
+### POST /devos/interrupt
+
+**Request:**
+```json
+{
+  "actionId": 123,
+  "reason": "User asked to stop this task"
+}
+```
+
+> `reason` is optional. When omitted, `errorMessage` is set to `USER_INTERRUPTED`.
+
+**Response (success):**
+```json
+{
+  "success": true,
+  "data": {
+    "actionId": 123,
+    "status": "FAILED",
+    "interrupted": true
+  }
+}
+```
+
+**Response (already terminal — 409 CONFLICT):**
+```json
+{
+  "success": false,
+  "message": "Action is already in terminal state and cannot be interrupted: 123"
+}
+```
+
+Active states that can be interrupted: `RUNNING`, `QUEUED`, `RETRY_WAIT`, `BLOCKED`.
+Terminal states (`SUCCEEDED`, `FAILED`, `DEAD_LETTER`) are immutable.
 
 ## GitHub Actions CI
 

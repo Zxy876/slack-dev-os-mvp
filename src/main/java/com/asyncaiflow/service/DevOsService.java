@@ -12,6 +12,8 @@ import com.asyncaiflow.domain.enums.WorkflowStatus;
 import com.asyncaiflow.mapper.ActionMapper;
 import com.asyncaiflow.mapper.WorkflowMapper;
 import com.asyncaiflow.service.queue.ActionQueueService;
+import com.asyncaiflow.web.dto.DevOsInterruptRequest;
+import com.asyncaiflow.web.dto.DevOsInterruptResponse;
 import com.asyncaiflow.web.dto.DevOsStartRequest;
 import com.asyncaiflow.web.dto.DevOsStartResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -40,16 +42,19 @@ public class DevOsService {
     private final WorkflowMapper workflowMapper;
     private final ActionMapper actionMapper;
     private final ActionQueueService actionQueueService;
+    private final ActionService actionService;
     private final ObjectMapper objectMapper;
 
     public DevOsService(
             WorkflowMapper workflowMapper,
             ActionMapper actionMapper,
             ActionQueueService actionQueueService,
+            ActionService actionService,
             ObjectMapper objectMapper) {
         this.workflowMapper = workflowMapper;
         this.actionMapper = actionMapper;
         this.actionQueueService = actionQueueService;
+        this.actionService = actionService;
         this.objectMapper = objectMapper;
     }
 
@@ -106,6 +111,17 @@ public class DevOsService {
                 action.getStatus(),
                 request.slackThreadId()
         );
+    }
+
+    /**
+     * B-003 — 用户中断 syscall。
+     *
+     * 将指定 Action 强制转为 FAILED。
+     * RUNNING / QUEUED / RETRY_WAIT / BLOCKED 状态均可被中断。
+     * 终态 Action （SUCCEEDED / FAILED / DEAD_LETTER）不可被中断，返回 409 CONFLICT。
+     */
+    public DevOsInterruptResponse interrupt(DevOsInterruptRequest request) {
+        return actionService.interruptAction(request.actionId(), request.reason());
     }
 
     private String buildPayload(String userText, String slackThreadId) {

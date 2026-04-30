@@ -41,6 +41,7 @@ import com.asyncaiflow.web.dto.ActionExecutionResponse;
 import com.asyncaiflow.web.dto.ActionLogEntryResponse;
 import com.asyncaiflow.web.dto.ActionResponse;
 import com.asyncaiflow.web.dto.CreateActionRequest;
+import com.asyncaiflow.web.dto.DevOsInterruptResponse;
 import com.asyncaiflow.web.dto.SubmitActionResultRequest;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
@@ -427,6 +428,47 @@ public class ActionService {
             workflowService.refreshStatus(workflowId);
         }
         return enqueuedCount;
+    }
+
+    /**
+     * B-003 — 用户中断 syscall。
+     *
+     * 将 RUNNING / QUEUED / RETRY_WAIT / BLOCKED 状态的 Action 转为 FAILED，
+     * 释放 worker lock，记录中断原因，阻止任务被再次调度或下游解锁。
+     *
+     * 不变量：
+     *   - 终态（SUCCEEDED / FAILED / DEAD_LETTER）不可被中断
+     *   - 被中断的 Action 不会再被 poll（pollAction 检查 DB status 为 FAILED 则跳过）
+     *   - 被中断的 Action 不会再被 retry（enqueueDueRetries 检查 RETRY_WAIT 状态）
+     *   - 被中断的 Action 不会解锁下游（下游只在 SUCCEEDED 时解锁）
+     */
+    @Transactional
+    public DevOsInterruptResponse interruptAction(Long actionId, String reason) {
+        ActionEntity action = requireAction(actionId);
+        ActionStatus currentStatus = parseActionStatus(action.getStatus());
+
+        if (currentStatus.isTerminal()) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Action is already in terminal state and cannot be interrupted: " + actionId);
+        }
+
+        String interruptMessage = (reason == null || reason.isBlank())
+                ? "USER_INTERRUPTED"
+                : "USER_INTERRUPTED: " + reason;
+
+        LocalDateTime now = LocalDateTime.now();
+        transitionState(action, ActionStatus.FAILED);
+        action.setErrorMessage(interruptMessage);
+        action.setLastReclaimReason("USER_INTERRUPTED");
+        action.setReclaimTime(now);
+        action.setLeaseExpireAt(null);
+        action.setNextRunAt(null);
+        action.setUpdatedAt(now);
+        actionMapper.updateById(action);
+        actionQueueService.releaseLock(actionId);
+        workflowService.refreshStatus(action.getWorkflowId());
+
+        return new DevOsInterruptResponse(actionId, ActionStatus.FAILED.name(), true);
     }
 
     @Transactional
@@ -1062,10 +1104,10 @@ public class ActionService {
 
     private boolean isValidTransition(ActionStatus from, ActionStatus to) {
         return switch (from) {
-            case BLOCKED -> to == ActionStatus.QUEUED;
-            case QUEUED -> to == ActionStatus.RUNNING;
+            case BLOCKED -> to == ActionStatus.QUEUED || to == ActionStatus.FAILED;
+            case QUEUED -> to == ActionStatus.RUNNING || to == ActionStatus.FAILED;
             case RUNNING -> to == ActionStatus.SUCCEEDED || to == ActionStatus.FAILED || to == ActionStatus.RETRY_WAIT || to == ActionStatus.DEAD_LETTER;
-            case RETRY_WAIT -> to == ActionStatus.QUEUED || to == ActionStatus.DEAD_LETTER;
+            case RETRY_WAIT -> to == ActionStatus.QUEUED || to == ActionStatus.DEAD_LETTER || to == ActionStatus.FAILED;
             case SUCCEEDED, FAILED, DEAD_LETTER -> false;
         };
     }

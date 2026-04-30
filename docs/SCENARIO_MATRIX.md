@@ -128,11 +128,13 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 
 ---
 
-## Stage 3 — Fault Tolerance & Watchdog (PLANNED)
+## Stage 3 — Fault Tolerance & Watchdog (COMPLETED)
 
-**Goal**: Validate kernel-level fault handling — lease expiry, dead letters, doom-loop prevention.
+**Goal**: Validate kernel-level fault handling — lease expiry, dead letters, doom-loop prevention, and user interrupt.
 
-### Scenario 3.1 — Worker Crash / Lease Expiry
+**Validation**: ✅ 98 tests, 0 failures, BUILD SUCCESS. Stage 3 complete: B-002 (Watchdog), B-003 (Interrupt), B-004 (DAG Acyclicity).
+
+### Scenario 3.1 — Worker Crash / Lease Expiry ✅
 
 | Step | Expected |
 |---|---|
@@ -141,19 +143,25 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 | Watchdog detects expired lease | Action returned to QUEUED for retry |
 | Retry count incremented | `retryCount <= maxRetryCount` checked |
 
-### Scenario 3.2 — Dead Letter After Max Retries
+**Tests**: `DevOsWatchdogLeaseTest.testLeaseExpiredTransitionsToRetryWaitWithCorrectFields` ✅
+
+### Scenario 3.2 — Dead Letter After Max Retries ✅
 
 | Step | Expected |
 |---|---|
-| Action fails `maxRetryCount` times | Status transitions to FAILED / DEAD_LETTER |
+| Action fails `maxRetryCount` times | Status transitions to DEAD_LETTER |
 | No further retries attempted | doom-loop prevented |
 
-### Scenario 3.3 — RETRY_WAIT Backoff
+**Tests**: `DevOsWatchdogLeaseTest.testMaxRetriesExhaustedTransitionsToDeadLetter` ✅
+
+### Scenario 3.3 — RETRY_WAIT Backoff ✅
 
 | Step | Expected |
 |---|---|
-| Retried action waits backoff duration | `scheduledAt` is in the future |
-| Worker cannot claim action before backoff expires | Action not polled prematurely |
+| Retried action waits backoff duration | `nextRunAt` is in the future |
+| enqueueDueRetries() fires after backoff | Action → QUEUED → re-pollable |
+
+**Tests**: `DevOsWatchdogLeaseTest.testRetryWaitReturnsToQueueAfterBackoffAndCanBePolled` ✅
 
 ### Scenario 3.4 — DAG Acyclicity Guarantee (B-004) ✅
 
@@ -165,6 +173,26 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 | Rejected createAction — no residue | ApiException + transaction rollback → 0 new rows | `testCreateActionRejectsNonexistentUpstreamAndLeavesNoResidue` ✅ |
 
 **Implementation**: `ActionService.wouldCreateCycle(Long downstreamId, List<Long> proposedUpstreamIds)` — BFS from downstreamId via existing downstream edges; if any reachable node equals a proposed upstream, cycle detected. Called defensively in `createAction` after action insert. Self-loop check included.
+
+### Scenario 3.5 — User Interrupt Signal (B-003) ✅
+
+| Scenario | Input State | Expected Outcome | Invariant |
+|---|---|---|---|
+| RUNNING action interrupted | Worker has lease, action RUNNING | status=FAILED, lastReclaimReason=USER_INTERRUPTED, lock released | Worker can no longer submit result for this action |
+| QUEUED action interrupted | Action in Redis queue, status QUEUED | status=FAILED; subsequent pollAction returns empty | pollAction checks DB status and skips FAILED |
+| RETRY_WAIT action interrupted | Backoff not yet expired, status RETRY_WAIT | status=FAILED; enqueueDueRetries returns 0 | enqueueDueRetries checks RETRY_WAIT status and skips FAILED |
+| Terminal action interrupt attempt | status SUCCEEDED or DEAD_LETTER | ApiException 409 CONFLICT; status unchanged | Terminal states are immutable |
+
+**Implementation**:
+- `POST /devos/interrupt` → `DevOsController.interrupt()` → `DevOsService.interrupt()` → `ActionService.interruptAction()`
+- `ActionService.interruptAction(Long actionId, String reason)`: loads PCB, rejects terminal, transitions to FAILED, sets `errorMessage="USER_INTERRUPTED: <reason>"`, `lastReclaimReason="USER_INTERRUPTED"`, releases lock
+- `isValidTransition` extended: QUEUED→FAILED, RETRY_WAIT→FAILED, BLOCKED→FAILED now valid
+
+**Tests**: `DevOsInterruptTest` (4 tests)
+- `testRunningActionCanBeInterrupted` ✅
+- `testQueuedActionCanBeInterrupted` ✅
+- `testRetryWaitActionCanBeInterrupted` ✅
+- `testTerminalActionsCannotBeInterrupted` ✅
 
 ---
 

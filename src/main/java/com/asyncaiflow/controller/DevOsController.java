@@ -7,6 +7,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.asyncaiflow.service.DevOsService;
 import com.asyncaiflow.web.ApiResponse;
+import com.asyncaiflow.web.dto.DevOsInterruptRequest;
+import com.asyncaiflow.web.dto.DevOsInterruptResponse;
 import com.asyncaiflow.web.dto.DevOsStartRequest;
 import com.asyncaiflow.web.dto.DevOsStartResponse;
 
@@ -62,5 +64,36 @@ public class DevOsController {
     public ApiResponse<DevOsStartResponse> start(@Valid @RequestBody DevOsStartRequest request) {
         DevOsStartResponse response = devOsService.start(request);
         return ApiResponse.ok("devos session started — action queued", response);
+    }
+
+    /**
+     * 用户中断指令。
+     *
+     * <pre>
+     * POST /devos/interrupt
+     * {
+     *   "actionId": 123,
+     *   "reason": "User asked to stop this task"
+     * }
+     * </pre>
+     *
+     * 响应：
+     * <pre>
+     * {
+     *   "success": true,
+     *   "data": {
+     *     "actionId": 123,
+     *     "status": "FAILED",
+     *     "interrupted": true
+     *   }
+     * }
+     * </pre>
+     *
+     * 如果 Action 已经是终态（SUCCEEDED / FAILED / DEAD_LETTER），返回 409 CONFLICT。
+     */
+    @PostMapping("/interrupt")
+    public ApiResponse<DevOsInterruptResponse> interrupt(@Valid @RequestBody DevOsInterruptRequest request) {
+        DevOsInterruptResponse response = devOsService.interrupt(request);
+        return ApiResponse.ok("action interrupted", response);
     }
 }
