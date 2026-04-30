@@ -43,14 +43,14 @@ jobs:
 
       - name: Start backend (local profile — H2 + Redis)
         run: |
-          mvn spring-boot:run -Dspring-boot.run.profiles=local > backend.log 2>&1 &
+          java -Dspring.profiles.active=local -jar target/*.jar > backend.log 2>&1 &
           echo "Backend starting (PID $!)..."
 
       - name: Wait for backend to be ready
         run: |
           echo "Waiting for /health to return 200..."
           for i in $(seq 1 90); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/health)
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/health 2>/dev/null || echo "000")
             if [ "$STATUS" = "200" ]; then
               echo "Backend ready after ${i}s"
               break
