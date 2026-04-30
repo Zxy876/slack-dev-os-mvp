@@ -12,6 +12,7 @@ import com.asyncaiflow.domain.enums.WorkflowStatus;
 import com.asyncaiflow.mapper.ActionMapper;
 import com.asyncaiflow.mapper.WorkflowMapper;
 import com.asyncaiflow.service.queue.ActionQueueService;
+import com.asyncaiflow.support.ApiException;
 import com.asyncaiflow.web.dto.DevOsInterruptRequest;
 import com.asyncaiflow.web.dto.DevOsInterruptResponse;
 import com.asyncaiflow.web.dto.DevOsStartRequest;
@@ -19,6 +20,7 @@ import com.asyncaiflow.web.dto.DevOsStartResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.springframework.http.HttpStatus;
 
 /**
  * DevOsService — Slack Dev OS 中断处理层（Syscall Gateway）
@@ -85,7 +87,8 @@ public class DevOsService {
 
         // 3. 创建 Action (PCB)
         // Context Restore：若调用方提供 prevActionId，继承其 notepad_ref（L2 寄存器恢复）
-        String inheritedNotepadRef = resolveNotepadRef(request.prevActionId());
+        // B-007: 必须与当前 slackThreadId 属于同一 thread，否则抛出 403
+        String inheritedNotepadRef = resolveNotepadRef(request.prevActionId(), request.slackThreadId());
 
         ActionEntity action = new ActionEntity();
         action.setWorkflowId(workflow.getId());
@@ -121,8 +124,22 @@ public class DevOsService {
      * 将指定 Action 强制转为 FAILED。
      * RUNNING / QUEUED / RETRY_WAIT / BLOCKED 状态均可被中断。
      * 终态 Action （SUCCEEDED / FAILED / DEAD_LETTER）不可被中断，返回 409 CONFLICT。
+     *
+     * B-007: 请求方的 slackThreadId 必须与目标 Action 的 slackThreadId 一致。
+     * 跨 thread 操作返回 403 FORBIDDEN，目标 Action 状态不变。
      */
     public DevOsInterruptResponse interrupt(DevOsInterruptRequest request) {
+        // B-007: Ownership check — 目标 Action 必须属于请求方的 slackThread
+        ActionEntity target = actionMapper.selectById(request.actionId());
+        if (target == null) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "Action not found: " + request.actionId());
+        }
+        String targetThreadId = target.getSlackThreadId();
+        if (targetThreadId == null || !request.slackThreadId().equals(targetThreadId)) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "Cross-thread interrupt denied: action " + request.actionId()
+                    + " belongs to a different slackThread");
+        }
         return actionService.interruptAction(request.actionId(), request.reason());
     }
 
@@ -154,15 +171,24 @@ public class DevOsService {
 
     /**
      * Context Restore 辅助：查询上一个 Action 的 notepad_ref。
-     * 仅在 prevActionId 非 null 时查询；找不到则返回 null（不抛异常，保持创建路径健壮）。
+     * 仅在 prevActionId 非 null 时查询。
+     *
+     * B-007 Ownership Check：若 prevAction 属于不同的 slackThread，招强拒绝（403 FORBIDDEN）。
+     * 防止跨 thread notepad 泄露；找不到 prevAction 则 fallback null（创建路径健壮）。
      */
-    private String resolveNotepadRef(Long prevActionId) {
+    private String resolveNotepadRef(Long prevActionId, String currentSlackThreadId) {
         if (prevActionId == null) {
             return null;
         }
         ActionEntity prev = actionMapper.selectById(prevActionId);
         if (prev == null) {
             return null;
+        }
+        // B-007: Ownership guard — prevAction 必须属于当前 slackThread
+        if (!currentSlackThreadId.equals(prev.getSlackThreadId())) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "Cross-thread context restore denied: prevActionId " + prevActionId
+                    + " belongs to a different slackThread");
         }
         return prev.getNotepadRef();
     }

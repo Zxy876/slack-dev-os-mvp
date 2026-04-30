@@ -73,6 +73,7 @@ public class DevOsController {
      * POST /devos/interrupt
      * {
      *   "actionId": 123,
+     *   "slackThreadId": "C08XXXXXX/1234567890.123456",
      *   "reason": "User asked to stop this task"
      * }
      * </pre>
@@ -90,6 +91,7 @@ public class DevOsController {
      * </pre>
      *
      * 如果 Action 已经是终态（SUCCEEDED / FAILED / DEAD_LETTER），返回 409 CONFLICT。
+     * 如果 slackThreadId 与目标 Action 的 slackThreadId 不匹配，返回 403 FORBIDDEN（B-007）。
      */
     @PostMapping("/interrupt")
     public ApiResponse<DevOsInterruptResponse> interrupt(@Valid @RequestBody DevOsInterruptRequest request) {

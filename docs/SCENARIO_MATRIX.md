@@ -19,6 +19,7 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 | Page fault / disk access | Repo file search worker tool | ✅ Stage 4 |
 | Single-writer mutex | Git branch workspace_snapshot + Redis SETNX | ✅ Stage 5 |
 | Tool Manager / Tool Call protocol | `ToolManager` whitelist + `repo.read_file` | ✅ Stage 6 |
+| Access Control / Ownership Guard | `slackThreadId` scope boundary; cross-thread 403 | ✅ Stage 6 |
 | Real syscall (Slack + LLM) | Slack slash command + chat.postMessage | ⏳ Stage 6 |
 
 ---
@@ -277,6 +278,49 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 ---
 
 ## Stage 6 — Tool Manager (COMPLETED)
+
+**Goal**: Minimal tool call protocol: ToolManager whitelist, repo.read_file, B-008.
+
+---
+
+## Stage 6 — Access Control / Ownership Guard (COMPLETED)
+
+**Goal**: slackThreadId as MVP resource scope boundary. Cross-thread operations rejected with 403 FORBIDDEN.
+
+### Scenario 6.2 — Context Restore Ownership Check
+
+| Step | Component | Expected |
+|---|---|---|
+| `POST /devos/start` with `prevActionId` same thread | `DevOsService.resolveNotepadRef()` | notepad_ref inherited |
+| `POST /devos/start` with `prevActionId` different thread | `DevOsService.resolveNotepadRef()` | 403 FORBIDDEN, no notepad leak |
+| Transaction rolls back on 403 | `@Transactional start()` | No orphan action created |
+
+**Validation**: `DevOsAccessControlTest.testSameThreadNotepadInheritanceAllowed` + `testCrossThreadNotepadInheritanceRejected`
+
+### Scenario 6.3 — Interrupt Ownership Check
+
+| Step | Component | Expected |
+|---|---|---|
+| `POST /devos/interrupt` same thread | `DevOsService.interrupt()` | Action transitions to FAILED |
+| `POST /devos/interrupt` different thread | `DevOsService.interrupt()` | 403 FORBIDDEN, action unchanged |
+| Target action status after rejection | `ActionEntity` | Remains QUEUED |
+
+**Validation**: `DevOsAccessControlTest.testSameThreadInterruptAllowed` + `testCrossThreadInterruptRejected`
+
+**Data flow**:
+```
+/devos/interrupt {actionId, slackThreadId}
+  → DevOsService.interrupt()
+    → actionMapper.selectById(actionId)
+    → if target.slackThreadId != request.slackThreadId → throw 403
+    → else → actionService.interruptAction() → FAILED
+
+/devos/start {prevActionId, slackThreadId}
+  → DevOsService.start() [@Transactional]
+    → DevOsService.resolveNotepadRef(prevActionId, slackThreadId)
+      → if prev.slackThreadId != request.slackThreadId → throw 403 (tx rollback)
+      → else → return prev.notepadRef
+```
 
 **Goal**: Consolidate the scattered Page Fault file-read capability into a minimal Tool Manager / Tool Call protocol.
 

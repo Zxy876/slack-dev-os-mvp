@@ -60,7 +60,8 @@ POST /devos/start
 - **Stage 4: Page Fault** — `repoPath` + `filePath` in `POST /devos/start`; worker safely reads file and injects `[PAGE_IN]` context
 - **Stage 5: Workspace Single-Writer Mutex** — `writeIntent` + `workspaceKey` in `POST /devos/start`; Redis SETNX prevents concurrent writes to same repo/workspace
 - **Stage 6: Tool Manager** — `ToolCall` / `ToolResponse` / `ToolManager` minimal tool protocol in `worker.py`; whitelist `{repo.read_file}` hard-coded; Page Fault path routes through `TOOL_MANAGER.execute()`; unknown tools return `ok=False` (no exception); 7 Python smoke tests in `test_tool_manager.py`
-- Full test suite passing: **104 Java tests + 7 Python smoke tests, 0 failures, BUILD SUCCESS**
+- **Stage 6: Ownership Guard (B-007)** — `slackThreadId` is the MVP resource scope boundary; `POST /devos/interrupt` requires `slackThreadId` matching the target Action; `POST /devos/start` with `prevActionId` requires same `slackThreadId`; cross-thread operations return 403 FORBIDDEN
+- Full test suite passing: **108 Java tests + 7 Python smoke tests, 0 failures, BUILD SUCCESS**
 
 ## Architecture Overview
 
@@ -128,7 +129,7 @@ curl -X POST http://localhost:8080/devos/start \
 mvn test
 ```
 
-**Verified result: 104 tests, 0 failures, BUILD SUCCESS**
+**Verified result: 108 tests, 0 failures, BUILD SUCCESS**
 
 The test suite runs entirely with H2 in-memory — no MySQL or Redis needed for tests.
 
@@ -193,10 +194,12 @@ LLM priority: `DEMO_MODE=true` (stub, highest) > `GLM_API_KEY` > `OPENAI_API_KEY
 ```json
 {
   "actionId": 123,
+  "slackThreadId": "C08XXXXXX/1234567890.123456",
   "reason": "User asked to stop this task"
 }
 ```
 
+> `slackThreadId` must match the Action's own `slackThreadId` (B-007 ownership guard). Mismatches return 403 FORBIDDEN.
 > `reason` is optional. When omitted, `errorMessage` is set to `USER_INTERRUPTED`.
 
 **Response (success):**

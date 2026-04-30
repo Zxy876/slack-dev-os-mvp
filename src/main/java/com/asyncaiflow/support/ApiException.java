@@ -30,6 +30,7 @@ public class ApiException extends RuntimeException {
             case BAD_REQUEST -> "INVALID_ARGUMENT";
             case NOT_FOUND -> "NOT_FOUND";
             case CONFLICT -> "CONFLICT";
+            case FORBIDDEN -> "ACCESS_DENIED";
             case TOO_MANY_REQUESTS -> "RATE_LIMITED";
             default -> "INTERNAL_ERROR";
         };

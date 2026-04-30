@@ -25,7 +25,7 @@
 | 11  | MODEL   | DAG 依赖 / 上游 ID               | ✅ DONE | `action_dependency` 表 + `validateUpstreamActions()` + `ActionService.wouldCreateCycle()` BFS; `DevOsDagCycleTest` (4 tests) | B-004 ✓ |
 | 12  | Q26     | Page Fault / 仓库检索            | ✅ DONE | `DevOsStartRequest.repoPath/filePath` 透传 payload；`worker.py safe_read_repo_file()`：安全校验 + 读取；DEMO_MODE [PAGE_IN] marker；`DevOsPageFaultRequestTest`（2 tests）；Page Fault E2E PASSED | B-005 ✓ |
 | 13  | MODEL   | Redis SETNX 互斥锁               | ✅ DONE | `ActionQueueService.tryAcquireWorkspaceLock/releaseWorkspaceLock`；`ActionService.pollAction` workspace check；`DevOsStartRequest.writeIntent/workspaceKey`；`DevOsWorkspaceMutexTest`（4 tests） | B-006 ✓ |
-| 14  | Q26     | 访问控制 / 权限隔离              | ⏳ DEFERRED | — | Stage 6 → B-007                  |
+| 14  | Q26     | 访问控制 / 权限隔离              | ✅ DONE | `DevOsInterruptRequest.slackThreadId`（required）；`DevOsService.resolveNotepadRef()` 跨 thread 检测 → 403；`DevOsService.interrupt()` 跨 thread 检测 → 403；`DevOsAccessControlTest`（4 tests）| B-007 ✓ |
 | 15  | Q26     | 工具管理器（Tool Manager）       | ✅ DONE | `worker.py` `ToolCall`/`ToolResponse`/`ToolManager`；WHITELIST={repo.read_file}；Page Fault → `TOOL_MANAGER.execute()`；`test_tool_manager.py`（7 smoke tests） | B-008 ✓ |
 | 16  | MODEL   | notepad_ref 持久化与注入         | ✅ DONE | `extractNotepadFromResult()` + `notepadRef` in poll response | —  |
 | 17  | Q26     | 多模型异构调度                   | ⏳ DEFERRED | — | Stage 6 → B-011                  |
