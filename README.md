@@ -54,7 +54,7 @@ POST /devos/start
 - `devos_chat` Python Worker (LLM + Slack integration)
 - Minimal notepad persistence for context restore on retry
 - **Stage 2: Context Restore** — `prevActionId` field propagates notepad across sequential Actions
-- Full test suite passing: **87 tests, 0 failures, BUILD SUCCESS**
+- Full test suite passing: **90 tests, 0 failures, BUILD SUCCESS**
 
 ## Architecture Overview
 
@@ -122,7 +122,7 @@ curl -X POST http://localhost:8080/devos/start \
 mvn test
 ```
 
-**Verified result: 87 tests, 0 failures, BUILD SUCCESS**
+**Verified result: 90 tests, 0 failures, BUILD SUCCESS**
 
 The test suite runs entirely with H2 in-memory — no MySQL or Redis needed for tests.
 

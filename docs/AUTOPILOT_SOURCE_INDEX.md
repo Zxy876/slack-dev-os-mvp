@@ -20,7 +20,7 @@
 | 6   | MODEL   | 7 状态机（含 DEAD_LETTER）       | ✅ DONE | `ActionStatus.java` enum + isValidTransition | —                                |
 | 7   | MODEL   | Context Switch / Notepad 恢复   | ✅ DONE    | `DevOsContextRestoreTest`：testNotepadPropagatesAcrossSequentialActions, testNotepadIsolatedAcrossThreads, testPrevActionIdNotFoundFallsBackToNull; `worker.py` notepad 注入修复; `DevOsService.resolveNotepadRef()` | —    |
 | 8   | ARC     | 多层检索器（工具调用 / RAG）     | ⏳ DEFERRED | — | Stage 4 → B-009                  |
-| 9   | ARC     | Watchdog 超时回收                | 🔶 PARTIAL | `ActionService.reclaimExpiredLeases()` + `SchedulerReliabilityIntegrationTest` | E2E 场景待 → B-002 |
+| 9   | ARC     | Watchdog 超时回收                | ✅ DONE    | `ActionService.reclaimExpiredLeases()` + `DevOsWatchdogLeaseTest` (3 tests: RETRY_WAIT, DEAD_LETTER, enqueueDueRetries) | B-002 ✓ |
 | 10  | Q26     | 用户中断信号（Interrupt Signal） | ⏳ DEFERRED | — | Stage 3 → B-003                  |
 | 11  | MODEL   | DAG 依赖 / 上游 ID               | ✅ DONE | `action_dependency` 表 + `validateUpstreamActions()` | 缺环检测测试 → B-004 |
 | 12  | Q26     | Page Fault / 仓库检索            | ⏳ DEFERRED | — | Stage 4 → B-005                  |
