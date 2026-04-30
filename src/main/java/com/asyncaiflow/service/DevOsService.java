@@ -78,9 +78,10 @@ public class DevOsService {
         workflow.setUpdatedAt(now);
         workflowMapper.insert(workflow);
 
-        // 2. 构造 payload JSON: {user_text, slack_thread_id[, repo_path, file_path]}
+        // 2. 构造 payload JSON: {user_text, slack_thread_id[, repo_path, file_path, write_intent, workspace_key]}
         String payload = buildPayload(request.text(), request.slackThreadId(),
-                request.repoPath(), request.filePath());
+                request.repoPath(), request.filePath(),
+                request.writeIntent(), request.workspaceKey());
 
         // 3. 创建 Action (PCB)
         // Context Restore：若调用方提供 prevActionId，继承其 notepad_ref（L2 寄存器恢复）
@@ -126,7 +127,8 @@ public class DevOsService {
     }
 
     private String buildPayload(String userText, String slackThreadId,
-                                String repoPath, String filePath) {
+                                String repoPath, String filePath,
+                                Boolean writeIntent, String workspaceKey) {
         ObjectNode node = objectMapper.createObjectNode();
         node.put("user_text", userText);
         node.put("slack_thread_id", slackThreadId);
@@ -135,6 +137,12 @@ public class DevOsService {
         }
         if (filePath != null && !filePath.isBlank()) {
             node.put("file_path", filePath);
+        }
+        if (Boolean.TRUE.equals(writeIntent)) {
+            node.put("write_intent", true);
+        }
+        if (workspaceKey != null && !workspaceKey.isBlank()) {
+            node.put("workspace_key", workspaceKey);
         }
         try {
             return objectMapper.writeValueAsString(node);

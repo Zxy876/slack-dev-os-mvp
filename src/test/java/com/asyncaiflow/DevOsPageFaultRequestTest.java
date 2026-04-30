@@ -117,7 +117,8 @@ class DevOsPageFaultRequestTest {
                 "CDEMO/1714500000.000100",
                 null,
                 "/tmp/devos-fixture-repo",
-                "README.md"
+                "README.md",
+                null, null
         ));
 
         ActionEntity action = actionMapper.selectById(resp.actionId());
@@ -153,7 +154,7 @@ class DevOsPageFaultRequestTest {
         DevOsStartResponse resp = devOsService.start(new DevOsStartRequest(
                 "How do I reset a build?",
                 "CDEMO/1714500000.000200",
-                null, null, null  // 不提供 repoPath / filePath
+                null, null, null, null, null  // 不提供 repoPath / filePath
         ));
 
         ActionEntity action = actionMapper.selectById(resp.actionId());

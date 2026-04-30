@@ -17,7 +17,7 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 | Context switch (CI proof) | GitHub Actions E2E workflow | ✅ Stage 1 |
 | Fault tolerance / watchdog | lease expiry, RETRY_WAIT, DEAD_LETTER | ⏳ Stage 3 |
 | Page fault / disk access | Repo file search worker tool | ✅ Stage 4 |
-| Single-writer mutex | Git branch workspace_snapshot + Redis SETNX | ⏳ Stage 5 |
+| Single-writer mutex | Git branch workspace_snapshot + Redis SETNX | ✅ Stage 5 |
 | Real syscall (Slack + LLM) | Slack slash command + chat.postMessage | ⏳ Stage 6 |
 
 ---

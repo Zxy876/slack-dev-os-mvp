@@ -57,7 +57,9 @@ POST /devos/start
 - **Stage 3: Watchdog / Lease / Retry** — lease expiry reclaim, RETRY_WAIT backoff, DEAD_LETTER doom-loop prevention
 - **Stage 3: DAG Acyclicity** — BFS cycle detection rejects directed cycles in action dependency graph
 - **Stage 3: User Interrupt** — `POST /devos/interrupt` transitions any active Action to FAILED; terminal actions protected
-- Full test suite passing: **100 tests, 0 failures, BUILD SUCCESS**
+- **Stage 4: Page Fault** — `repoPath` + `filePath` in `POST /devos/start`; worker safely reads file and injects `[PAGE_IN]` context
+- **Stage 5: Workspace Single-Writer Mutex** — `writeIntent` + `workspaceKey` in `POST /devos/start`; Redis SETNX prevents concurrent writes to same repo/workspace
+- Full test suite passing: **104 tests, 0 failures, BUILD SUCCESS**
 
 ## Architecture Overview
 
@@ -125,7 +127,7 @@ curl -X POST http://localhost:8080/devos/start \
 mvn test
 ```
 
-**Verified result: 100 tests, 0 failures, BUILD SUCCESS**
+**Verified result: 104 tests, 0 failures, BUILD SUCCESS**
 
 The test suite runs entirely with H2 in-memory — no MySQL or Redis needed for tests.
 
@@ -157,13 +159,17 @@ LLM priority: `DEMO_MODE=true` (stub, highest) > `GLM_API_KEY` > `OPENAI_API_KEY
   "slackThreadId": "C08XXXXXX/1234567890.123456",
   "prevActionId": 42,
   "repoPath": "/path/to/local/repo",
-  "filePath": "src/main/README.md"
+  "filePath": "src/main/README.md",
+  "writeIntent": true,
+  "workspaceKey": "repo:/path/to/local/repo"
 }
 ```
 
 > `prevActionId` is optional. When provided, the new Action inherits the notepad_ref from the referenced Action (Stage 2 Context Restore).
 >
 > `repoPath` + `filePath` are optional. When both are provided, the worker performs a **Page Fault** (Stage 4): reads the file safely and injects `[PAGE_IN]` content into the LLM response and `[page-in:filePath]` into the notepad.
+>
+> `writeIntent` + `workspaceKey` are optional (Stage 5 Workspace Mutex). When `writeIntent=true`, the kernel acquires a Redis SETNX lock on `workspaceKey` before transitioning the Action to RUNNING. Only one writer per `workspaceKey` can be RUNNING at a time; additional writers are re-queued until the current writer finishes. `writeIntent=false` actions bypass the mutex and schedule freely.
 
 **Response:**
 ```json

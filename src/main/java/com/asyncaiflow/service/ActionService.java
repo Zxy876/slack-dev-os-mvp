@@ -211,11 +211,25 @@ public class ActionService {
                 continue;
             }
 
+            // B-006 — Workspace single-writer mutex: prevent concurrent writes to the same repo/workspace.
+            // If write_intent=true and workspace_key is set, attempt SETNX on the workspace lock.
+            // On failure: release the per-action lock, re-enqueue, and try next candidate.
+            int executionTimeoutSeconds = normalizePositive(action.getExecutionTimeoutSeconds(), defaultExecutionTimeoutSeconds);
+            String wsKey = extractWorkspaceKey(action.getPayload());
+            if (extractWriteIntent(action.getPayload()) && wsKey != null) {
+                boolean acquired = actionQueueService.tryAcquireWorkspaceLock(
+                        wsKey, action.getId().toString(), executionTimeoutSeconds);
+                if (!acquired) {
+                    actionQueueService.releaseLock(candidateActionId.get());
+                    actionQueueService.enqueue(action, requiredCapability);
+                    continue;
+                }
+            }
+
             String assignmentPayload = materializeAssignmentPayload(action);
 
             transitionState(action, ActionStatus.RUNNING);
             LocalDateTime now = LocalDateTime.now();
-            int executionTimeoutSeconds = normalizePositive(action.getExecutionTimeoutSeconds(), defaultExecutionTimeoutSeconds);
             action.setWorkerId(workerId);
             action.setLeaseExpireAt(now.plusSeconds(executionTimeoutSeconds));
             action.setNextRunAt(null);
@@ -286,6 +300,7 @@ public class ActionService {
 
             recordActionLog(action.getId(), request.workerId(), request.result(), ActionStatus.SUCCEEDED.name(), now);
             actionQueueService.releaseLock(action.getId());
+            releaseWorkspaceLockIfApplicable(action);
             triggerDownstreamActions(action);
             workflowService.refreshStatus(action.getWorkflowId());
             return toResponse(actionMapper.selectById(action.getId()));
@@ -466,6 +481,7 @@ public class ActionService {
         action.setUpdatedAt(now);
         actionMapper.updateById(action);
         actionQueueService.releaseLock(actionId);
+        releaseWorkspaceLockIfApplicable(action);
         workflowService.refreshStatus(action.getWorkflowId());
 
         return new DevOsInterruptResponse(actionId, ActionStatus.FAILED.name(), true);
@@ -1022,6 +1038,7 @@ public class ActionService {
         action.setWorkerId(null);
         action.setUpdatedAt(now);
         actionQueueService.releaseLock(action.getId());
+        releaseWorkspaceLockIfApplicable(action);
 
         if (nextRetryCount <= maxRetryCount) {
             transitionState(action, ActionStatus.RETRY_WAIT);
@@ -1036,8 +1053,35 @@ public class ActionService {
         recordActionLog(action.getId(), workerId, result, logStatus, now);
     }
 
-    private long computeBackoffSeconds(Integer configuredBackoffSeconds, int retryAttempt) {
-        long baseSeconds = Math.max(0, configuredBackoffSeconds == null ? defaultBackoffSeconds : configuredBackoffSeconds);
+    // ── B-006 Workspace Mutex helpers ─────────────────────────────────────────
+
+    private boolean extractWriteIntent(String payload) {
+        if (payload == null || payload.isBlank()) return false;
+        try {
+            return objectMapper.readTree(payload).path("write_intent").asBoolean(false);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private String extractWorkspaceKey(String payload) {
+        if (payload == null || payload.isBlank()) return null;
+        try {
+            String key = objectMapper.readTree(payload).path("workspace_key").asText(null);
+            return (key == null || key.isBlank()) ? null : key;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void releaseWorkspaceLockIfApplicable(ActionEntity action) {
+        String wsKey = extractWorkspaceKey(action.getPayload());
+        if (wsKey != null) {
+            actionQueueService.releaseWorkspaceLock(wsKey, action.getId().toString());
+        }
+    }
+
+    private long computeBackoffSeconds(Integer configuredBackoffSeconds, int retryAttempt) {        long baseSeconds = Math.max(0, configuredBackoffSeconds == null ? defaultBackoffSeconds : configuredBackoffSeconds);
         if (baseSeconds == 0) {
             return 0;
         }

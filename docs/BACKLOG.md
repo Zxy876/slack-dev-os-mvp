@@ -15,7 +15,7 @@
 ~~| B-003 | 10      | Stage 3 | 用户中断信号（Interrupt Signal）| 设计并实现 `POST /devos/interrupt`：将 RUNNING Action 标记为 FAILED，触发 Interrupt Handler | P2     |~~ → ✅ DONE
 ~~| B-004 | 11      | Stage 3 | DAG 环检测                     | `validateUpstreamActions()` 应检测有向环（A→B→A）并返回 400                  | P2     |~~ → ✅ DONE
 ~~| B-005 | 12      | Stage 4 | Page Fault / 仓库文件检索      | 实现 `repo_retrieval_worker`：接收文件路径，返回内容摘要注入 notepad          | P3     |~~ → ✅ DONE
-| B-006 | 13      | Stage 5 | Redis SETNX Worker 互斥锁      | `ActionQueueService.pollAction()` 使用 SETNX 防止双 Worker 竞争同一 Action   | P3     |
+~~| B-006 | 13      | Stage 5 | Redis SETNX Worker 互斥锁      | `ActionQueueService.pollAction()` 使用 SETNX 防止双 Worker 竞争同一 Action   | P3     |~~ → ✅ DONE
 | B-007 | 14      | Stage 6 | 访问控制 / 权限隔离             | Workflow 粒度 RBAC；slackThreadId 绑定用户 scope                              | P4     |
 | B-008 | 15      | Stage 6 | 工具管理器（Tool Manager）      | Worker 能力注册中心：动态加载 / 卸载 capability；工具调用结果回写 notepad     | P4     |
 | B-009 | 8       | Stage 4 | 多层检索器（RAG）               | 实现向量检索 Worker；notepad 中附加检索结果                                   | P3     |
@@ -38,7 +38,8 @@
 | B-001 | Stage 2: Context Restore（prevActionId + 3 集成测试 + E2E 双轮） | commit `feat(stage2)` — 2026-04-30 |
 | B-002 | Stage 3: Watchdog Lease/Retry（3 集成测试: RETRY_WAIT, DEAD_LETTER, enqueueDueRetries 全循环） | commit `feat(stage3)` — 2026-04-30 |
 | B-003 | Stage 3: User Interrupt Signal（RUNNING/QUEUED/RETRY_WAIT/BLOCKED → FAILED，`POST /devos/interrupt`，4 集成测试: RUNNING中断, QUEUED中断+poll保护, RETRY_WAIT中断+retry保护, 终态拒绝） | commit `feat(stage3): B-003` — 2026-04-30 || B-004 | Stage 3: DAG 循环检测（BFS循环检测 + 工作流防循环 + 4 集成测试） | commit 'feat(stage3): B-004' — 2026-04-30 |
-| B-005 | Stage 4: Page Fault / Repository File Retrieval（DevOsStartRequest.repoPath/filePath 透传 payload；worker safe_read_repo_file 安全校验 + 文件读取；响应含 [PAGE_IN] marker；notepad 含 [page-in:filePath]；2 集成测试 + Page Fault E2E） | commit 'feat(stage4): B-005' — 2026-04-30 |
+| B-005 | Stage 4: Page Fault / Repository File Retrieval（DevOsStartRequest.repoPath/filePath 透传 payload；worker safe_read_repo_file()：安全校验 + 文件读取；DEMO_MODE [PAGE_IN] marker；notepad 含 [page-in:filePath]；2 集成测试 + Page Fault E2E） | commit 'feat(stage4): B-005' — 2026-04-30 |
+| B-006 | Stage 5: Workspace Single-Writer Mutex（`DevOsStartRequest.writeIntent/workspaceKey` 透传 payload；`ActionQueueService.tryAcquireWorkspaceLock/releaseWorkspaceLock` Redis SETNX；`ActionService.pollAction` 変化：获得锁失败则重入队列；在 submitResult/interruptAction/applyFailureWithRetry 释放锁；4 集成测试: 阻塞防护, SUCCEEDED释锁, 只读不预, 中断释锁） | commit 'feat(stage5): B-006' — 2026-04-30 |
 ---
 
 ## 里程碑映射
