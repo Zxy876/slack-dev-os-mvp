@@ -22,6 +22,7 @@
 | B-010 | 0       | Stage 6 | 真实 Slack Token + LLM Key     | 生产环境接入：Slack Event API + OpenAI/GLM 真实 key；消除 DEMO_MODE 依赖     | P4     |
 | B-011 | 17      | Stage 6 | 多模型异构调度                  | Worker 声明 `model_capability`；调度器按任务类型路由到不同 LLM 后端            | P4     |
 | B-012 | 10      | Stage 3 | 中断作为异步信号                | 中断信号走 Redis PubSub；Worker 轮询期间收到信号则提前退出并提交 FAILED 状态  | P3     |
+| B-013 | CI      | CI      | Flaky Test 稳定化              | `dispatchRespectsPerWorkflowParallelLimit` 在 GHA 中偶发失败；根因：`spring.task.scheduling.enabled=false` 不能阻止 `@Scheduled` bean 运行；修复：为 `SchedulerMaintenanceService` 加 `@ConditionalOnProperty` 使该属性真正生效 | P1     | → ✅ DONE
 
 ---
 
@@ -42,6 +43,7 @@
 | B-005 | Stage 4: Page Fault / Repository File Retrieval（DevOsStartRequest.repoPath/filePath 透传 payload；worker safe_read_repo_file()：安全校验 + 文件读取；DEMO_MODE [PAGE_IN] marker；notepad 含 [page-in:filePath]；2 集成测试 + Page Fault E2E） | commit 'feat(stage4): B-005' — 2026-04-30 |
 | B-006 | Stage 5: Workspace Single-Writer Mutex（`DevOsStartRequest.writeIntent/workspaceKey` 透传 payload；`ActionQueueService.tryAcquireWorkspaceLock/releaseWorkspaceLock` Redis SETNX；`ActionService.pollAction` 変化：获得锁失败则重入队列；在 submitResult/interruptAction/applyFailureWithRetry 释放锁；4 集成测试: 阻塞防护, SUCCEEDED释锁, 只读不预, 中断释锁） | commit `feat(stage5): B-006` — 2026-04-30 |
 | B-008 | Stage 6: Tool Manager（`ToolCall` / `ToolResponse` dataclasses；`ToolManager` 白名单注册表（WHITELIST={repo.read_file}）；Page Fault 路径改走 `TOOL_MANAGER.execute()`；未知工具返回 ok=False 不抛异常；`test_tool_manager.py`：7 pytest smoke tests（whitelist拒绝, 未知工具, 路径穿越, 绝对路径, 正常读取）；CI devos-demo-e2e.yml 新增 smoke test step） | commit `feat(stage6): B-008` — 2026-04-30 |
+| B-013 | CI: Flaky Test 稳定化（`SchedulerMaintenanceService` 加 `@ConditionalOnProperty(name="spring.task.scheduling.enabled", matchIfMissing=true)`，使所有测试类中的 `spring.task.scheduling.enabled=false` 真正阻止后台调度器运行；`dispatchRespectsPerWorkflowParallelLimit` 5 轮全绿） | commit `test(ci): B-013` — 2026-04-30 |
 ---
 
 ## 里程碑映射

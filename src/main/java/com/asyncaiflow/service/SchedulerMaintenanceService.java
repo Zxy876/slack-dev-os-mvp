@@ -1,10 +1,12 @@
 package com.asyncaiflow.service;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 @Service
+@ConditionalOnProperty(name = "spring.task.scheduling.enabled", matchIfMissing = true)
 public class SchedulerMaintenanceService {
 
     private final ActionService actionService;
