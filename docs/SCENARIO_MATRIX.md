@@ -549,10 +549,50 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 
 ---
 
+## Stage 10 — One-step Fix Loop / Test Failure → Fix Proposal (COMPLETED)
+
+**Goal**: Close the test–fix feedback cycle by queuing a read-only fix-plan action when tests fail.
+
+**Validation**: ✅ 130 Java + 54 Python tests, 0 failures. `DevOsProposeFixTest` (8 tests). `test_fix_preview.py` (13 tests). `run_fix_loop_e2e.sh` (9 assertions). B-020 complete.
+
+### Scenario 10.1 — Valid propose-fix request → QUEUED action with mode=fix_preview ✅
+
+**Given**: Backend running, valid `repoPath`, `filePath=README.md`, `testStatus=FAILED`, `exitCode=1`\
+**When**: `POST /devos/propose-fix`\
+**Then**: HTTP 200, `status=QUEUED`, `actionId` set, `payload.mode=fix_preview`, `failure_context` embedded
+
+### Scenario 10.2 — stdout/stderr truncated at 8000 chars ✅
+
+**Given**: `stdoutExcerpt` = 15000 chars, `stderrExcerpt` = 12000 chars\
+**When**: `POST /devos/propose-fix`\
+**Then**: Stored payload fields `≤8000` chars; content starts with original prefix
+
+### Scenario 10.3 — hint truncated at 2000 chars ✅
+
+**Given**: `hint` = 5000 chars\
+**When**: `POST /devos/propose-fix`\
+**Then**: Stored `failure_context.hint` `≤2000` chars
+
+### Scenario 10.4 — DEMO_MODE worker returns [FIX_PLAN_ONLY] stub ✅
+
+**Given**: `DEMO_MODE=true`, valid payload with `mode=fix_preview`\
+**When**: `execute_fix_preview()` called\
+**Then**: `status=SUCCEEDED`, `response` contains `[FIX_PLAN_ONLY]`, original file unchanged
+
+### Scenario 10.5 — Unsafe file path rejected ✅
+
+**Given**: `file_path` is absolute path or `../../etc/passwd`\
+**When**: `execute_fix_preview()` called\
+**Then**: `status=FAILED`, no file read performed, no mutation
+
+**E2E**: `scripts/run_fix_loop_e2e.sh` — 9 assertions: propose-fix→QUEUED, status=QUEUED, thread echoed, message has actionId, payload.mode verified, README unchanged, missing fields→400×2, secret scan PASS.
+
+---
+
 ## Status Summary
 
-> **v0.1.0-rc2 + Stage 9** — All scenarios in scope have been implemented and CI-verified.
-> 122 Java tests + 41 Python tests, 0 failures. Five E2E scripts green. No real secrets in CI.
+> **v0.1.0-rc2 + Stage 10** — All scenarios in scope have been implemented and CI-verified.
+> 130 Java tests + 54 Python tests, 0 failures. Six E2E scripts green. No real secrets in CI.
 
 | Stage | Name | Status | CI Proof |
 |---|---|---|---|
@@ -569,3 +609,4 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 | 7 | Dry-Run Coding / Patch Preview | ✅ Complete | `test_patch_preview.py` (10 tests) + `run_patch_preview_e2e.sh` |
 | 8 | Human Confirm Apply Patch | ✅ Complete | `DevOsApplyPatchTest` (5 tests) + `run_apply_patch_e2e.sh` |
 | 9 | Test Command Runner | ✅ Complete | `DevOsRunTestTest` (9 tests) + `run_test_runner_e2e.sh` |
+| 10 | One-step Fix Loop | ✅ Complete | `DevOsProposeFixTest` (8 tests) + `test_fix_preview.py` (13 tests) + `run_fix_loop_e2e.sh` |

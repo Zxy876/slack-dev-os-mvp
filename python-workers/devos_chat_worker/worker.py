@@ -915,6 +915,167 @@ def execute_patch_preview(action_id: int, payload: dict, slack_thread_id: Option
 
 
 # ─────────────────────────────────────────────────────────────
+# B-020 Fix Preview Executor
+# ─────────────────────────────────────────────────────────────
+
+# Maximum chars read from a file for fix-preview context
+_FIX_PREVIEW_MAX_FILE_BYTES = 8_000
+# Maximum chars of failure context to embed in LLM prompt
+_FIX_PREVIEW_MAX_FAILURE_CHARS = 1_000
+
+
+def execute_fix_preview(
+    action_id: int,
+    payload: dict,
+    slack_thread_id: Optional[str],
+) -> tuple[str, dict, Optional[str]]:
+    """
+    B-020 fix preview path:
+      1. Validate repoPath + filePath (via safe_read_repo_file)
+      2. Read target file content (read-only — no workspace copy needed)
+      3. Extract failure context from payload.failure_context
+      4. DEMO_MODE → return deterministic [FIX_PLAN_ONLY] stub
+         Real LLM  → build fix-oriented prompt, return [FIX_PLAN_ONLY]
+                     (or [FIX_PATCH_PREVIEW] if LLM provides structured diff)
+      5. Submit result with fixPreview metadata (hasPatch=False always on first pass)
+
+    Safety invariants:
+      - NO filesystem mutation at any point
+      - NO auto-apply / NO commit / NO push
+      - NO shell execution
+      - file content truncated at _FIX_PREVIEW_MAX_FILE_BYTES chars
+      - failure context fields truncated at _FIX_PREVIEW_MAX_FAILURE_CHARS chars
+      - path safety enforced by safe_read_repo_file (same as page fault / patch preview)
+
+    Returns: (status, result_dict, error_message)
+    """
+    repo_path = payload.get("repo_path", "").strip()
+    file_path = payload.get("file_path", "").strip()
+    failure_context = payload.get("failure_context") or {}
+    notepad = payload.get("notepadRef")
+
+    if not repo_path or not file_path:
+        return "FAILED", {}, "fix_preview requires both repo_path and file_path"
+
+    # ── Step 1: read file (read-only, path-safe) ──────────────
+    read_resp = TOOL_MANAGER.execute(ToolCall(
+        name="repo.read_file",
+        args={"repo_path": repo_path, "file_path": file_path,
+              "max_bytes": _FIX_PREVIEW_MAX_FILE_BYTES},
+    ))
+    if not read_resp.ok:
+        return "FAILED", {}, f"repo.read_file failed: {read_resp.error}"
+
+    file_content = read_resp.content
+
+    # ── Step 2: extract & sanitize failure context ────────────
+    fc = failure_context if isinstance(failure_context, dict) else {}
+    test_status  = str(fc.get("test_status", "FAILED"))[:64]
+    exit_code    = int(fc.get("exit_code", -1)) if isinstance(fc.get("exit_code"), (int, float, str)) else -1
+    stdout_raw   = str(fc.get("stdout_excerpt", ""))
+    stderr_raw   = str(fc.get("stderr_excerpt", ""))
+    hint_raw     = str(fc.get("hint", ""))
+    stdout_snip  = stdout_raw[:_FIX_PREVIEW_MAX_FAILURE_CHARS]
+    stderr_snip  = stderr_raw[:_FIX_PREVIEW_MAX_FAILURE_CHARS]
+    hint_snip    = hint_raw[:512]
+
+    LOGGER.info(
+        "[fix-preview] action=%s file=%s test_status=%s exitCode=%d",
+        action_id, file_path, test_status, exit_code,
+    )
+
+    # ── Step 3: build response ────────────────────────────────
+    if is_demo_mode():
+        response_text = (
+            f"[FIX_PLAN_ONLY]\n"
+            f"File: {file_path}\n"
+            f"Test status: {test_status} (exitCode={exit_code})\n\n"
+            f"Suggested fix steps:\n"
+            f"1. Review the stderr output for the root cause\n"
+            f"2. Inspect {file_path} around the failing assertion or exception\n"
+            f"3. Apply the minimal change to fix the failure\n"
+            f"4. Re-run the test suite to confirm\n\n"
+            f"No filesystem changes were made. Review this plan and apply changes manually.\n"
+            f"(Demo stub — provide real LLM keys for code-level suggestions)"
+        )
+        notepad_snapshot = (
+            f"[fix-preview:{action_id}]\n"
+            f"file: {file_path}\n"
+            f"test_status: {test_status}\n"
+            f"exit_code: {exit_code}\n"
+            f"no_apply: true\n"
+            f"no_commit: true"
+        )
+
+        if slack_thread_id:
+            post_to_slack(slack_thread_id, response_text)
+
+        return "SUCCEEDED", {
+            "response": response_text,
+            "notepad": notepad_snapshot,
+            "fixPreview": {
+                "repoPath": repo_path,
+                "filePath": file_path,
+                "testStatus": test_status,
+                "exitCode": exit_code,
+                "hasPatch": False,
+            },
+        }, None
+
+    # ── Real LLM path ─────────────────────────────────────────
+    file_excerpt = file_content[:2_000]
+    hint_clause = f"\nHuman hint: {hint_snip}" if hint_snip.strip() else ""
+
+    llm_prompt = (
+        f"You are a software engineering assistant generating a fix suggestion.\n\n"
+        f"A test suite failed on file: {file_path}\n"
+        f"Exit code: {exit_code}  |  Test status: {test_status}{hint_clause}\n\n"
+        f"--- stdout (excerpt) ---\n{stdout_snip}\n\n"
+        f"--- stderr (excerpt) ---\n{stderr_snip}\n\n"
+        f"--- file content (excerpt) ---\n```\n{file_excerpt}\n```\n\n"
+        f"Provide a structured fix plan:\n"
+        f"1. Root cause of the failure\n"
+        f"2. Which lines / sections to modify\n"
+        f"3. Proposed change (unified diff if possible)\n\n"
+        f"IMPORTANT: This is a fix-preview ONLY. "
+        f"Do NOT claim to have applied changes. "
+        f"Do NOT modify any files. "
+        f"Await human review before any change is applied."
+    )
+
+    try:
+        llm_response = call_llm(llm_prompt, notepad, payload=payload)
+    except Exception as exc:
+        return "FAILED", {}, f"LLM call failed: {exc}"
+
+    response_text = f"[FIX_PLAN_ONLY]\n{llm_response}"
+    notepad_snapshot = (
+        f"[fix-preview:{action_id}]\n"
+        f"file: {file_path}\n"
+        f"test_status: {test_status}\n"
+        f"exit_code: {exit_code}\n"
+        f"plan: {llm_response[:300]}\n"
+        f"no_apply: true\n"
+        f"no_commit: true"
+    )
+
+    if slack_thread_id:
+        post_to_slack(slack_thread_id, response_text)
+
+    return "SUCCEEDED", {
+        "response": response_text,
+        "notepad": notepad_snapshot,
+        "fixPreview": {
+            "repoPath": repo_path,
+            "filePath": file_path,
+            "testStatus": test_status,
+            "exitCode": exit_code,
+            "hasPatch": False,
+        },
+    }, None
+
+
+# ─────────────────────────────────────────────────────────────
 # Worker 执行核心（指令周期）
 # ─────────────────────────────────────────────────────────────
 
@@ -957,6 +1118,12 @@ def execute(assignment: dict) -> tuple[str, dict, Optional[str]]:
         # Pass notepadRef into payload so execute_patch_preview can access it
         payload["notepadRef"] = notepad
         return execute_patch_preview(action_id, payload, slack_thread_id)
+
+    # ── B-020 fix_preview routing ─────────────────────────────
+    if mode == "fix_preview":
+        LOGGER.info("[fix-preview] routing action %s to fix preview executor", action_id)
+        payload["notepadRef"] = notepad
+        return execute_fix_preview(action_id, payload, slack_thread_id)
 
     # ── normal devos_chat path ────────────────────────────────
 

@@ -422,6 +422,54 @@ SKIP_BACKEND=1 bash scripts/run_test_runner_e2e.sh
 
 ---
 
+## One-step Fix Loop (B-020)
+
+Stage 10 closes the test-failure feedback loop: after `POST /devos/run-test` returns `FAILED`, the human can immediately call `POST /devos/propose-fix` to queue an action that reads the failing file and returns a structured fix plan — **no auto-apply, no auto-commit, no auto-push**.
+
+**Data flow:**
+```
+POST /devos/propose-fix {
+  "slackThreadId":  "C08XXXXXX/1234567890.123456",
+  "repoPath":       "/path/to/local/repo",
+  "filePath":       "src/main/java/com/example/Foo.java",
+  "testStatus":     "FAILED",
+  "exitCode":       1,
+  "stdoutExcerpt":  "Tests run: 3, Failures: 1, Errors: 0",
+  "stderrExcerpt":  "AssertionError: expected 0 but was 1",
+  "hint":           "Check the null guard on line 42"
+}
+
+→ { "actionId": 123, "workflowId": 456,
+    "status": "QUEUED", "slackThreadId": "...",
+    "message": "fix proposal queued — action 123" }
+```
+
+The worker reads the file via `repo.read_file` (read-only) and returns:
+- `[FIX_PLAN_ONLY]` — structured plan: root cause + lines to change + proposed diff
+- Result posted to Slack for human review
+
+**Safety invariants:**
+
+| Guard | Behaviour |
+|---|---|
+| Propose-fix is read-only | Only `repo.read_file` called — no workspace copy, no replace, no write |
+| No auto-apply | `hasPatch=False` always; human must call `/apply-patch` separately |
+| No auto-commit / push | By design — human controls every Git operation |
+| stdout/stderr truncated | `≤8000 chars` each before storing in action payload |
+| hint truncated | `≤2000 chars` |
+| Unsafe file_path | Absolute path or `../` traversal → `FAILED` status returned |
+| Missing required fields | `slackThreadId`, `repoPath`, `filePath` all `@NotBlank` → 400 |
+
+**Run the E2E proof:**
+```bash
+# Backend + Redis must already be running
+SKIP_BACKEND=1 bash scripts/run_fix_loop_e2e.sh
+```
+
+**Unit tests:** `src/test/java/com/asyncaiflow/DevOsProposeFixTest.java` (8 scenarios) + `python-workers/devos_chat_worker/test_fix_preview.py` (13 scenarios)
+
+---
+
 ## API Reference
 
 ### POST /devos/start

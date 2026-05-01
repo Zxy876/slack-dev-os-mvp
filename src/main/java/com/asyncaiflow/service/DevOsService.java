@@ -29,6 +29,8 @@ import com.asyncaiflow.web.dto.DevOsApplyPatchRequest;
 import com.asyncaiflow.web.dto.DevOsApplyPatchResponse;
 import com.asyncaiflow.web.dto.DevOsInterruptRequest;
 import com.asyncaiflow.web.dto.DevOsInterruptResponse;
+import com.asyncaiflow.web.dto.DevOsProposeFixRequest;
+import com.asyncaiflow.web.dto.DevOsProposeFixResponse;
 import com.asyncaiflow.web.dto.DevOsRunTestRequest;
 import com.asyncaiflow.web.dto.DevOsRunTestResponse;
 import com.asyncaiflow.web.dto.DevOsStartRequest;
@@ -589,5 +591,108 @@ public class DevOsService {
                 stdoutExcerpt, stderrExcerpt,
                 cmd, repoDir.toString()
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // B-020 Propose Fix — observe failure → queue fix_preview action
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Maximum chars preserved for failure context fields in the payload. */
+    private static final int MAX_FAILURE_CONTEXT_CHARS = 8_000;
+
+    /** Maximum chars preserved for the human hint field. */
+    private static final int MAX_HINT_CHARS = 2_000;
+
+    /**
+     * B-020 — Create a fix_preview Action from test failure evidence.
+     *
+     * Safety invariants:
+     *  1. No filesystem mutation (neither here nor in the queued action itself)
+     *  2. No automatic apply/commit/push
+     *  3. No shell execution
+     *  4. stdout/stderr/hint are truncated before embedding in payload
+     *  5. Worker will validate repoPath/filePath safety independently
+     *  6. Returns actionId immediately; caller polls for the fix plan result
+     */
+    @Transactional
+    public DevOsProposeFixResponse proposeFix(DevOsProposeFixRequest request) {
+        LocalDateTime now = LocalDateTime.now();
+
+        // 1. Create Workflow
+        WorkflowEntity workflow = new WorkflowEntity();
+        String workflowName = "devos:fix:" + truncate(request.filePath(), 60);
+        workflow.setName(workflowName);
+        workflow.setDescription("Fix proposal for " + request.filePath()
+                + " — thread " + request.slackThreadId());
+        workflow.setStatus(WorkflowStatus.CREATED.name());
+        workflow.setCreatedAt(now);
+        workflow.setUpdatedAt(now);
+        workflowMapper.insert(workflow);
+
+        // 2. Build payload with failure context (all string fields truncated)
+        String payload = buildFixPreviewPayload(request);
+
+        // 3. Create Action
+        ActionEntity action = new ActionEntity();
+        action.setWorkflowId(workflow.getId());
+        action.setType(DEVOS_CHAT_ACTION_TYPE);
+        action.setStatus(ActionStatus.QUEUED.name());
+        action.setPayload(payload);
+        action.setSlackThreadId(request.slackThreadId());
+        action.setNotepadRef(null);   // no context restore for fix proposals
+        action.setRetryCount(0);
+        action.setMaxRetryCount(2);
+        action.setBackoffSeconds(5);
+        action.setExecutionTimeoutSeconds(120);
+        action.setLeaseRenewSuccessCount(0);
+        action.setLeaseRenewFailureCount(0);
+        action.setCreatedAt(now);
+        action.setUpdatedAt(now);
+        actionMapper.insert(action);
+
+        // 4. Enqueue
+        actionQueueService.enqueue(action, DEVOS_CHAT_ACTION_TYPE);
+
+        return new DevOsProposeFixResponse(
+                action.getId(),
+                workflow.getId(),
+                action.getStatus(),
+                request.slackThreadId(),
+                "fix proposal queued — action " + action.getId()
+        );
+    }
+
+    private String buildFixPreviewPayload(DevOsProposeFixRequest request) {
+        ObjectNode node = objectMapper.createObjectNode();
+        // user_text is used by the worker for logging; keep it human-readable
+        node.put("user_text",
+                "Fix suggestion for " + request.filePath()
+                + " (test " + (request.testStatus() != null ? request.testStatus() : "FAILED")
+                + " exitCode=" + (request.exitCode() != null ? request.exitCode() : -1) + ")");
+        node.put("slack_thread_id", request.slackThreadId());
+        node.put("mode", "fix_preview");
+        node.put("repo_path", request.repoPath());
+        node.put("file_path", request.filePath());
+
+        // Nested failure_context object (all fields truncated for safety)
+        ObjectNode failureCtx = objectMapper.createObjectNode();
+        failureCtx.put("test_status",
+                request.testStatus() != null ? request.testStatus() : "FAILED");
+        failureCtx.put("exit_code",
+                request.exitCode() != null ? request.exitCode() : -1);
+        failureCtx.put("stdout_excerpt",
+                truncate(request.stdoutExcerpt(), MAX_FAILURE_CONTEXT_CHARS));
+        failureCtx.put("stderr_excerpt",
+                truncate(request.stderrExcerpt(), MAX_FAILURE_CONTEXT_CHARS));
+        failureCtx.put("hint",
+                truncate(request.hint(), MAX_HINT_CHARS));
+        node.set("failure_context", failureCtx);
+
+        try {
+            return objectMapper.writeValueAsString(node);
+        } catch (JsonProcessingException e) {
+            // Should never happen with well-formed ObjectNode
+            return "{\"user_text\":\"fix_preview\",\"mode\":\"fix_preview\"}";
+        }
     }
 }

@@ -11,6 +11,8 @@ import com.asyncaiflow.web.dto.DevOsApplyPatchRequest;
 import com.asyncaiflow.web.dto.DevOsApplyPatchResponse;
 import com.asyncaiflow.web.dto.DevOsInterruptRequest;
 import com.asyncaiflow.web.dto.DevOsInterruptResponse;
+import com.asyncaiflow.web.dto.DevOsProposeFixRequest;
+import com.asyncaiflow.web.dto.DevOsProposeFixResponse;
 import com.asyncaiflow.web.dto.DevOsRunTestRequest;
 import com.asyncaiflow.web.dto.DevOsRunTestResponse;
 import com.asyncaiflow.web.dto.DevOsStartRequest;
@@ -179,5 +181,49 @@ public class DevOsController {
     public ApiResponse<DevOsRunTestResponse> runTest(@Valid @RequestBody DevOsRunTestRequest request) {
         DevOsRunTestResponse response = devOsService.runTest(request);
         return ApiResponse.ok("test command executed", response);
+    }
+
+    /**
+     * B-020 — Propose a fix for a test failure.
+     *
+     * <pre>
+     * POST /devos/propose-fix
+     * {
+     *   "slackThreadId":  "C08XXXXXX/1234567890.123456",
+     *   "repoPath":       "/path/to/local/repo",
+     *   "filePath":       "src/main/Example.java",
+     *   "testStatus":     "FAILED",
+     *   "exitCode":       1,
+     *   "stdoutExcerpt":  "...",
+     *   "stderrExcerpt":  "...",
+     *   "hint":           "optional human guidance"
+     * }
+     * </pre>
+     *
+     * 响应（HTTP 200）:
+     * <pre>
+     * {
+     *   "success": true,
+     *   "data": {
+     *     "actionId":     123,
+     *     "workflowId":   456,
+     *     "status":       "QUEUED",
+     *     "slackThreadId": "C08XXXXXX/1234567890.123456",
+     *     "message":      "fix proposal queued — action 123"
+     *   }
+     * }
+     * </pre>
+     *
+     * 安全不变量：
+     *  - 不自动修改任何文件
+     *  - 不自动 apply patch
+     *  - 不自动 commit / push
+     *  - failure context 内容截断后存入 payload
+     *  - Worker 返回 [FIX_PLAN_ONLY] 或 [FIX_PATCH_PREVIEW]，交由人类审阅
+     */
+    @PostMapping("/propose-fix")
+    public ApiResponse<DevOsProposeFixResponse> proposeFix(@Valid @RequestBody DevOsProposeFixRequest request) {
+        DevOsProposeFixResponse response = devOsService.proposeFix(request);
+        return ApiResponse.ok("fix proposal queued", response);
     }
 }
