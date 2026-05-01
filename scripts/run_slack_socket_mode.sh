@@ -43,6 +43,15 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKER_DIR="${REPO_ROOT}/python-workers/devos_chat_worker"
 
+# ── Auto-load .env if present and vars not already exported ──
+if [[ -f "${WORKER_DIR}/.env" ]]; then
+  # shellcheck source=/dev/null
+  set -a
+  # shellcheck disable=SC1090
+  source "${WORKER_DIR}/.env"
+  set +a
+fi
+
 # ── Env var status check ─────────────────────────────────────
 echo "================================================="
 echo " Slack Dev OS — Socket Mode Adapter (B-023)"
