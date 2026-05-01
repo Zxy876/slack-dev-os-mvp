@@ -280,6 +280,49 @@ After the smoke passes, check your Slack channel — the LLM response should app
 > **CI never runs live smoke.** CI always uses `DEMO_MODE=true` with no real secrets.  
 > **Never commit your `.env` file.** It is in `.gitignore`.
 
+---
+
+## Devin-like Patch Preview / Dry-Run Coding (B-017)
+
+Stage 7 adds a **dry-run coding** capability: the worker can apply a deterministic text replacement on a workspace-isolated copy of a repo file, generate a unified diff, and post the result to Slack — the original file is **never modified**.
+
+**Data flow (with `replaceFrom`/`replaceTo`):**
+```
+POST /devos/start {
+  "text": "Replace Hello Old Title with Hello Slack Dev OS",
+  "slackThreadId": "C08XXXXXX",
+  "repoPath": "/tmp/devos-patch-fixture",
+  "filePath": "README.md",
+  "writeIntent": true,
+  "mode": "patch_preview",
+  "replaceFrom": "Hello Old Title",
+  "replaceTo":   "Hello Slack Dev OS"
+}
+→ Worker: create /tmp/devos-workspaces/<actionId>/README.md (copy)
+→ Worker: apply replaceFrom→replaceTo in copy only
+→ Worker: generate unified diff (original vs copy)
+→ Worker: post [PATCH_PREVIEW] + diff to Slack
+→ Worker: clean up workspace
+→ INVARIANT: /tmp/devos-patch-fixture/README.md still contains "Hello Old Title"
+```
+
+**Without `replaceFrom`** (plan-only mode): the worker calls the LLM with the file content and returns `[PATCH_PLAN_ONLY]` with the LLM's structured patch plan.
+
+**Security guarantees:**
+- `file_path` must be relative (no absolute paths, no `..` traversal)
+- Workspace files must stay under `/tmp/devos-workspaces/` (boundary enforced)
+- No arbitrary shell execution
+
+**Run the E2E proof:**
+```bash
+# Backend + Redis must already be running (SKIP_BACKEND=1 to reuse)
+SKIP_BACKEND=1 bash scripts/run_patch_preview_e2e.sh
+```
+
+**Unit tests:** `python-workers/devos_chat_worker/test_patch_preview.py` (10 pytest cases)
+
+---
+
 ## API Reference
 
 ### POST /devos/start
@@ -293,7 +336,10 @@ After the smoke passes, check your Slack channel — the LLM response should app
   "repoPath": "/path/to/local/repo",
   "filePath": "src/main/README.md",
   "writeIntent": true,
-  "workspaceKey": "repo:/path/to/local/repo"
+  "workspaceKey": "repo:/path/to/local/repo",
+  "mode": "patch_preview",
+  "replaceFrom": "Hello Old Title",
+  "replaceTo": "Hello Slack Dev OS"
 }
 ```
 
@@ -302,6 +348,8 @@ After the smoke passes, check your Slack channel — the LLM response should app
 > `repoPath` + `filePath` are optional. When both are provided, the worker performs a **Page Fault** (Stage 4): reads the file safely and injects `[PAGE_IN]` content into the LLM response and `[page-in:filePath]` into the notepad.
 >
 > `writeIntent` + `workspaceKey` are optional (Stage 5 Workspace Mutex). When `writeIntent=true`, the kernel acquires a Redis SETNX lock on `workspaceKey` before transitioning the Action to RUNNING. Only one writer per `workspaceKey` can be RUNNING at a time; additional writers are re-queued until the current writer finishes. `writeIntent=false` actions bypass the mutex and schedule freely.
+>
+> `mode` is optional. Set to `"patch_preview"` for Stage 7 dry-run coding. `replaceFrom` + `replaceTo` are optional sub-fields for deterministic replacement diff. If `replaceFrom` is absent, the LLM generates a `[PATCH_PLAN_ONLY]` instead.
 
 **Response:**
 ```json

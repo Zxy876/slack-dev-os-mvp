@@ -31,9 +31,12 @@ OS 架构对应：
 """
 from __future__ import annotations
 
+import difflib
 import json
 import logging
 import os
+import shutil
+import tempfile
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -357,9 +360,15 @@ class ToolManager:
       - 只允许 WHITELIST 内的工具名注册和执行；
       - 未知工具返回 ok=False 的 ToolResponse，不抛异常；
       - 禁止任意 shell command、网络工具、动态插件加载。
-    当前白名单: repo.read_file
+    当前白名单: repo.read_file, repo.create_workspace_copy,
+               repo.replace_in_file_preview, repo.diff_workspace
     """
-    WHITELIST: frozenset = frozenset({"repo.read_file"})
+    WHITELIST: frozenset = frozenset({
+        "repo.read_file",
+        "repo.create_workspace_copy",
+        "repo.replace_in_file_preview",
+        "repo.diff_workspace",
+    })
 
     def __init__(self) -> None:
         self._handlers: dict = {}
@@ -418,6 +427,220 @@ TOOL_MANAGER = ToolManager()
 TOOL_MANAGER.register("repo.read_file", _repo_read_file_handler)
 
 
+# ─────────────────────────────────────────────────────────────
+# B-017 Patch Preview Tools
+# ─────────────────────────────────────────────────────────────
+
+# 安全常量
+_PATCH_WORKSPACE_ROOT = os.environ.get("DEVOS_WORKSPACE_ROOT", "/tmp/devos-workspaces")
+_MAX_WORKSPACE_FILE_BYTES = 256 * 1024  # 256 KB max file to copy/patch
+
+
+def _safe_workspace_path(action_id: int) -> str:
+    """返回隔离 workspace 路径（不创建目录）。"""
+    return os.path.join(_PATCH_WORKSPACE_ROOT, str(action_id))
+
+
+def _validate_patch_paths(repo_path: str, file_path: str) -> Optional[str]:
+    """
+    验证 repo_path + file_path 安全性（与 safe_read_repo_file 同等标准）。
+    返回 error string 或 None（通过）。
+    """
+    if not repo_path or not file_path:
+        return "repo_path and file_path must not be empty"
+    if os.path.isabs(file_path):
+        return "file_path must be relative, not absolute"
+    norm = os.path.normpath(file_path)
+    if ".." in norm.split(os.sep):
+        return "file_path must not contain '..'"
+    real_repo = os.path.realpath(repo_path)
+    candidate = os.path.realpath(os.path.join(repo_path, file_path))
+    if not candidate.startswith(real_repo + os.sep) and candidate != real_repo:
+        return "resolved path escapes repo boundary"
+    return None
+
+
+def _repo_create_workspace_copy_handler(args: dict) -> ToolResponse:
+    """
+    repo.create_workspace_copy — 将 repo_path/file_path 复制到隔离 workspace。
+
+    安全：只复制单文件；workspace 在 /tmp/devos-workspaces/<action_id>/；
+    不修改原 repo。
+    """
+    repo_path = args.get("repo_path", "")
+    file_path = args.get("file_path", "")
+    action_id = args.get("action_id", "unknown")
+
+    err = _validate_patch_paths(repo_path, file_path)
+    if err:
+        return ToolResponse(name="repo.create_workspace_copy", ok=False, error=err)
+
+    src = os.path.realpath(os.path.join(repo_path, file_path))
+    if not os.path.isfile(src):
+        return ToolResponse(
+            name="repo.create_workspace_copy", ok=False,
+            error=f"source file not found: {file_path}",
+        )
+
+    file_size = os.path.getsize(src)
+    if file_size > _MAX_WORKSPACE_FILE_BYTES:
+        return ToolResponse(
+            name="repo.create_workspace_copy", ok=False,
+            error=f"file too large for patch preview: {file_size} bytes (max {_MAX_WORKSPACE_FILE_BYTES})",
+        )
+
+    ws_dir = _safe_workspace_path(action_id)
+    ws_file = os.path.join(ws_dir, os.path.normpath(file_path))
+    os.makedirs(os.path.dirname(ws_file), exist_ok=True)
+
+    shutil.copy2(src, ws_file)
+    LOGGER.info("[workspace-copy] copied %s → %s", src, ws_file)
+
+    return ToolResponse(
+        name="repo.create_workspace_copy",
+        ok=True,
+        content=ws_file,
+        metadata={"workspace_dir": ws_dir, "workspace_file": ws_file, "source_file": src},
+    )
+
+
+def _repo_replace_in_file_preview_handler(args: dict) -> ToolResponse:
+    """
+    repo.replace_in_file_preview — 在 workspace 副本中执行文本替换（不修改原 repo）。
+
+    安全：只操作 workspace_file 路径（必须在 _PATCH_WORKSPACE_ROOT 内）；
+    不执行任意代码；不写回 repo_path。
+    """
+    workspace_file = args.get("workspace_file", "")
+    replace_from = args.get("replace_from", "")
+    replace_to = args.get("replace_to", "")
+
+    if not workspace_file or not replace_from:
+        return ToolResponse(
+            name="repo.replace_in_file_preview", ok=False,
+            error="workspace_file and replace_from must not be empty",
+        )
+
+    # 安全：workspace_file 必须在 _PATCH_WORKSPACE_ROOT 内
+    real_ws = os.path.realpath(workspace_file)
+    real_root = os.path.realpath(_PATCH_WORKSPACE_ROOT)
+    if not real_ws.startswith(real_root + os.sep):
+        return ToolResponse(
+            name="repo.replace_in_file_preview", ok=False,
+            error="workspace_file is outside the designated workspace root",
+        )
+
+    if not os.path.isfile(real_ws):
+        return ToolResponse(
+            name="repo.replace_in_file_preview", ok=False,
+            error=f"workspace_file not found: {workspace_file}",
+        )
+
+    try:
+        with open(real_ws, "r", encoding="utf-8", errors="replace") as fh:
+            original = fh.read()
+    except OSError as exc:
+        return ToolResponse(name="repo.replace_in_file_preview", ok=False, error=str(exc))
+
+    if replace_from not in original:
+        return ToolResponse(
+            name="repo.replace_in_file_preview", ok=False,
+            error=f"replace_from string not found in file",
+            metadata={"replace_from_len": len(replace_from)},
+        )
+
+    modified = original.replace(replace_from, replace_to, 1)
+
+    try:
+        with open(real_ws, "w", encoding="utf-8") as fh:
+            fh.write(modified)
+    except OSError as exc:
+        return ToolResponse(name="repo.replace_in_file_preview", ok=False, error=str(exc))
+
+    LOGGER.info("[patch-preview] replaced %d chars → %d chars in %s",
+                len(replace_from), len(replace_to), workspace_file)
+
+    return ToolResponse(
+        name="repo.replace_in_file_preview",
+        ok=True,
+        content=modified[:500],
+        metadata={
+            "workspace_file": workspace_file,
+            "replace_from_len": len(replace_from),
+            "replace_to_len": len(replace_to),
+        },
+    )
+
+
+def _repo_diff_workspace_handler(args: dict) -> ToolResponse:
+    """
+    repo.diff_workspace — 生成 workspace 副本 vs 原始文件的 unified diff。
+
+    安全：只读操作；workspace_file 必须在 _PATCH_WORKSPACE_ROOT 内；
+    original_file 必须是 repo_path 内的真实文件路径。
+    """
+    workspace_file = args.get("workspace_file", "")
+    original_file = args.get("original_file", "")
+    file_label = args.get("file_label", os.path.basename(workspace_file))
+
+    if not workspace_file or not original_file:
+        return ToolResponse(
+            name="repo.diff_workspace", ok=False,
+            error="workspace_file and original_file must not be empty",
+        )
+
+    real_ws = os.path.realpath(workspace_file)
+    real_orig = os.path.realpath(original_file)
+    real_root = os.path.realpath(_PATCH_WORKSPACE_ROOT)
+
+    if not real_ws.startswith(real_root + os.sep):
+        return ToolResponse(
+            name="repo.diff_workspace", ok=False,
+            error="workspace_file is outside the designated workspace root",
+        )
+
+    for path, label in [(real_ws, "workspace_file"), (real_orig, "original_file")]:
+        if not os.path.isfile(path):
+            return ToolResponse(
+                name="repo.diff_workspace", ok=False,
+                error=f"{label} not found: {path}",
+            )
+
+    try:
+        with open(real_orig, "r", encoding="utf-8", errors="replace") as fh:
+            orig_lines = fh.readlines()
+        with open(real_ws, "r", encoding="utf-8", errors="replace") as fh:
+            new_lines = fh.readlines()
+    except OSError as exc:
+        return ToolResponse(name="repo.diff_workspace", ok=False, error=str(exc))
+
+    diff_lines = list(difflib.unified_diff(
+        orig_lines, new_lines,
+        fromfile=f"a/{file_label}",
+        tofile=f"b/{file_label}",
+        lineterm="",
+    ))
+
+    diff_text = "\n".join(diff_lines)
+    LOGGER.info("[diff-workspace] generated %d diff lines for %s", len(diff_lines), file_label)
+
+    return ToolResponse(
+        name="repo.diff_workspace",
+        ok=True,
+        content=diff_text,
+        metadata={
+            "diff_lines": len(diff_lines),
+            "file_label": file_label,
+            "changed": len(diff_lines) > 0,
+        },
+    )
+
+
+TOOL_MANAGER.register("repo.create_workspace_copy", _repo_create_workspace_copy_handler)
+TOOL_MANAGER.register("repo.replace_in_file_preview", _repo_replace_in_file_preview_handler)
+TOOL_MANAGER.register("repo.diff_workspace", _repo_diff_workspace_handler)
+
+
 def call_llm(user_text: str, notepad: Optional[str], payload: Optional[dict] = None) -> str:
     """
     LLM 调度：DEMO_MODE > GLM > OpenAI
@@ -434,6 +657,16 @@ def call_llm(user_text: str, notepad: Optional[str], payload: Optional[dict] = N
         # B-005 Page Fault: if repo_path + file_path present in payload, do page-in
         repo_path = payload.get("repo_path", "").strip() if isinstance(payload, dict) else ""
         file_path = payload.get("file_path", "").strip() if isinstance(payload, dict) else ""
+        mode = payload.get("mode", "").strip().lower() if isinstance(payload, dict) else ""
+        if mode == "patch_preview":
+            # In DEMO_MODE patch_preview, return a stub patch plan
+            return (
+                f"[DEMO PATCH_PLAN_ONLY]\n"
+                f"1. Modify {file_path or 'target file'} as requested\n"
+                f"2. Replace matching text with updated content\n"
+                f"3. Run tests to verify change\n"
+                f"(Demo stub — provide replace_from/replace_to for real diff)"
+            )
         if repo_path and file_path:
             # B-008: route through ToolManager instead of calling safe_read_repo_file directly
             page_in_resp = TOOL_MANAGER.execute(
@@ -525,6 +758,140 @@ def post_to_slack(slack_thread_id: str, text: str) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────
+# B-017 Patch Preview Executor
+# ─────────────────────────────────────────────────────────────
+
+def execute_patch_preview(action_id: int, payload: dict, slack_thread_id: Optional[str]) -> tuple[str, dict, Optional[str]]:
+    """
+    B-017 dry-run coding path:
+      1. Read target file from repo
+      2. Create isolated workspace copy
+      3. If replace_from/replace_to provided → apply replacement + generate diff → [PATCH_PREVIEW]
+      4. Else → ask LLM for patch plan → [PATCH_PLAN_ONLY]
+      5. Post result to Slack; never modify original repo
+
+    Returns: (status, result_dict, error_message)
+    """
+    repo_path = payload.get("repo_path", "").strip()
+    file_path = payload.get("file_path", "").strip()
+    user_text = payload.get("user_text", "").strip()
+    replace_from = payload.get("replace_from", "").strip()
+    replace_to = payload.get("replace_to", "").strip()
+    notepad = payload.get("notepadRef")  # may be absent
+
+    if not repo_path or not file_path:
+        return "FAILED", {}, "patch_preview requires both repo_path and file_path"
+
+    # ── Step 1: read original file ──────────────────────────
+    read_resp = TOOL_MANAGER.execute(ToolCall(
+        name="repo.read_file",
+        args={"repo_path": repo_path, "file_path": file_path},
+    ))
+    if not read_resp.ok:
+        return "FAILED", {}, f"repo.read_file failed: {read_resp.error}"
+
+    original_content = read_resp.content
+
+    # ── Step 2: create workspace copy ──────────────────────
+    copy_resp = TOOL_MANAGER.execute(ToolCall(
+        name="repo.create_workspace_copy",
+        args={"repo_path": repo_path, "file_path": file_path, "action_id": action_id},
+    ))
+    if not copy_resp.ok:
+        return "FAILED", {}, f"repo.create_workspace_copy failed: {copy_resp.error}"
+
+    workspace_file = copy_resp.metadata["workspace_file"]
+    original_file = copy_resp.metadata["source_file"]
+    workspace_dir = copy_resp.metadata["workspace_dir"]
+
+    # ── Step 3a: deterministic patch (replace_from provided) ─
+    if replace_from:
+        replace_resp = TOOL_MANAGER.execute(ToolCall(
+            name="repo.replace_in_file_preview",
+            args={
+                "workspace_file": workspace_file,
+                "replace_from": replace_from,
+                "replace_to": replace_to,
+            },
+        ))
+        if not replace_resp.ok:
+            shutil.rmtree(workspace_dir, ignore_errors=True)
+            return "FAILED", {}, f"repo.replace_in_file_preview failed: {replace_resp.error}"
+
+        diff_resp = TOOL_MANAGER.execute(ToolCall(
+            name="repo.diff_workspace",
+            args={
+                "workspace_file": workspace_file,
+                "original_file": original_file,
+                "file_label": file_path,
+            },
+        ))
+
+        # Clean up workspace (patch already captured in diff)
+        shutil.rmtree(workspace_dir, ignore_errors=True)
+
+        diff_text = diff_resp.content if diff_resp.ok else "(diff generation failed)"
+        diff_excerpt = diff_text[:1500] if diff_text else "(no changes)"
+        changed_files = [file_path] if diff_resp.metadata.get("changed") else []
+
+        response_text = (
+            f"[PATCH_PREVIEW]\n"
+            f"File: {file_path}\n"
+            f"Changed files: {', '.join(changed_files) or 'none'}\n\n"
+            f"```diff\n{diff_excerpt}\n```\n\n"
+            f"Original repo NOT modified. Review diff above before applying."
+        )
+
+        notepad_snapshot = (
+            f"[patch-preview:{action_id}]\n"
+            f"workspace: {workspace_dir} (cleaned)\n"
+            f"changed: {', '.join(changed_files) or 'none'}\n"
+            f"test_status: skipped\n"
+            f"diff_lines: {diff_resp.metadata.get('diff_lines', 0)}"
+        )
+
+        if slack_thread_id:
+            post_to_slack(slack_thread_id, response_text)
+
+        return "SUCCEEDED", {"response": response_text, "notepad": notepad_snapshot}, None
+
+    # ── Step 3b: LLM patch plan (no replace_from) ─────────
+    shutil.rmtree(workspace_dir, ignore_errors=True)  # no actual patch, discard copy
+
+    # Build LLM prompt with file content
+    file_excerpt = original_content[:2000]
+    llm_prompt = (
+        f"You are a coding assistant performing a dry-run patch preview.\n\n"
+        f"User request: {user_text}\n\n"
+        f"Target file: {file_path}\n"
+        f"Current content (excerpt):\n```\n{file_excerpt}\n```\n\n"
+        f"Provide a structured patch plan:\n"
+        f"1. What changes are needed\n"
+        f"2. Which lines/sections to modify\n"
+        f"3. Show a unified diff if possible\n\n"
+        f"IMPORTANT: This is a dry-run preview only. Do not auto-apply changes."
+    )
+
+    try:
+        llm_response = call_llm(llm_prompt, notepad, payload=payload)
+    except Exception as exc:
+        return "FAILED", {}, f"LLM call failed: {exc}"
+
+    response_text = f"[PATCH_PLAN_ONLY]\n{llm_response}"
+    notepad_snapshot = (
+        f"[patch-plan:{action_id}]\n"
+        f"file: {file_path}\n"
+        f"request: {user_text[:200]}\n"
+        f"plan: {llm_response[:300]}"
+    )
+
+    if slack_thread_id:
+        post_to_slack(slack_thread_id, response_text)
+
+    return "SUCCEEDED", {"response": response_text, "notepad": notepad_snapshot}, None
+
+
+# ─────────────────────────────────────────────────────────────
 # Worker 执行核心（指令周期）
 # ─────────────────────────────────────────────────────────────
 
@@ -559,6 +926,16 @@ def execute(assignment: dict) -> tuple[str, dict, Optional[str]]:
         "Executing action %s type=devos_chat retry=%d slack_thread=%s notepad=%s",
         action_id, retry_count, slack_thread_id, "present" if notepad else "none",
     )
+
+    # ── B-017 patch_preview routing ──────────────────────────
+    mode = payload.get("mode", "").strip().lower()
+    if mode == "patch_preview":
+        LOGGER.info("[patch-preview] routing action %s to patch preview executor", action_id)
+        # Pass notepadRef into payload so execute_patch_preview can access it
+        payload["notepadRef"] = notepad
+        return execute_patch_preview(action_id, payload, slack_thread_id)
+
+    # ── normal devos_chat path ────────────────────────────────
 
     # --- L1 Thinking Loop: 构建提示词 ---
     if notepad:

@@ -2,6 +2,7 @@ package com.asyncaiflow.service;
 
 import java.time.LocalDateTime;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,7 +21,6 @@ import com.asyncaiflow.web.dto.DevOsStartResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.springframework.http.HttpStatus;
 
 /**
  * DevOsService — Slack Dev OS 中断处理层（Syscall Gateway）
@@ -80,10 +80,11 @@ public class DevOsService {
         workflow.setUpdatedAt(now);
         workflowMapper.insert(workflow);
 
-        // 2. 构造 payload JSON: {user_text, slack_thread_id[, repo_path, file_path, write_intent, workspace_key]}
+        // 2. 构造 payload JSON: {user_text, slack_thread_id[, repo_path, file_path, write_intent, workspace_key, mode, replace_from, replace_to]}
         String payload = buildPayload(request.text(), request.slackThreadId(),
                 request.repoPath(), request.filePath(),
-                request.writeIntent(), request.workspaceKey());
+                request.writeIntent(), request.workspaceKey(),
+                request.mode(), request.replaceFrom(), request.replaceTo());
 
         // 3. 创建 Action (PCB)
         // Context Restore：若调用方提供 prevActionId，继承其 notepad_ref（L2 寄存器恢复）
@@ -145,7 +146,8 @@ public class DevOsService {
 
     private String buildPayload(String userText, String slackThreadId,
                                 String repoPath, String filePath,
-                                Boolean writeIntent, String workspaceKey) {
+                                Boolean writeIntent, String workspaceKey,
+                                String mode, String replaceFrom, String replaceTo) {
         ObjectNode node = objectMapper.createObjectNode();
         node.put("user_text", userText);
         node.put("slack_thread_id", slackThreadId);
@@ -160,6 +162,16 @@ public class DevOsService {
         }
         if (workspaceKey != null && !workspaceKey.isBlank()) {
             node.put("workspace_key", workspaceKey);
+        }
+        // B-017 patch preview fields
+        if (mode != null && !mode.isBlank()) {
+            node.put("mode", mode);
+        }
+        if (replaceFrom != null && !replaceFrom.isBlank()) {
+            node.put("replace_from", replaceFrom);
+        }
+        if (replaceTo != null && !replaceTo.isBlank()) {
+            node.put("replace_to", replaceTo);
         }
         try {
             return objectMapper.writeValueAsString(node);

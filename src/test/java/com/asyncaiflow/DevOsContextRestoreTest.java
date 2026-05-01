@@ -125,7 +125,7 @@ class DevOsContextRestoreTest {
         DevOsStartResponse resp1 = devOsService.start(new DevOsStartRequest(
                 "design the system architecture",
                 "T-ALPHA/1000000000.000001",
-                null, null, null, null, null   // 第一轮无 prevActionId / repoPath / filePath
+                null, null, null, null, null, null, null, null // 第一轮无 prevActionId / repoPath / filePath, null, null, null
         ));
         Long action1Id = resp1.actionId();
 
@@ -158,7 +158,7 @@ class DevOsContextRestoreTest {
         DevOsStartResponse resp2 = devOsService.start(new DevOsStartRequest(
                 "continue the previous step",
                 "T-ALPHA/1000000000.000001",
-                action1Id, null, null, null, null  // Context Restore: 继承 Action 1 的 notepad
+                action1Id, null, null, null, null, null, null, null // Context Restore: 继承 Action 1 的 notepad, null, null, null
         ));
         Long action2Id = resp2.actionId();
 
@@ -195,7 +195,7 @@ class DevOsContextRestoreTest {
         DevOsStartResponse respA = devOsService.start(new DevOsStartRequest(
                 "alpha workflow step",
                 "T-ALPHA/2000000000.000001",
-                null, null, null, null, null
+                null, null, null, null, null, null, null, null
         ));
         Long actionAId = respA.actionId();
 
@@ -215,7 +215,7 @@ class DevOsContextRestoreTest {
         DevOsStartResponse respB = devOsService.start(new DevOsStartRequest(
                 "beta workflow step",
                 "T-BETA/2000000000.000002",
-                null, null, null, null, null  // 故意不传 prevActionId —— 跨 thread 无关联
+                null, null, null, null, null, null, null, null // 故意不传 prevActionId —— 跨 thread 无关联, null, null, null
         ));
         Long actionBId = respB.actionId();
 
@@ -255,7 +255,7 @@ class DevOsContextRestoreTest {
         DevOsStartResponse resp = devOsService.start(new DevOsStartRequest(
                 "some task",
                 "T-GAMMA/3000000000.000001",
-                999999999L, null, null, null, null  // 不存在的 actionId
+                999999999L, null, null, null, null, null, null, null // 不存在的 actionId, null, null, null
         ));
 
         ActionEntity action = actionMapper.selectById(resp.actionId());

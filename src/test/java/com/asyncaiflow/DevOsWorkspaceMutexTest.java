@@ -125,7 +125,7 @@ class DevOsWorkspaceMutexTest {
                 "write to repo: step 1",
                 "CMUTEX/1000000001.000001",
                 null, null, null,
-                true, WORKSPACE_KEY
+                true, WORKSPACE_KEY, null, null, null
         ));
         Long action1Id = resp1.actionId();
 
@@ -134,7 +134,7 @@ class DevOsWorkspaceMutexTest {
                 "write to repo: step 2",
                 "CMUTEX/1000000001.000002",
                 null, null, null,
-                true, WORKSPACE_KEY
+                true, WORKSPACE_KEY, null, null, null
         ));
         Long action2Id = resp2.actionId();
 
@@ -171,7 +171,7 @@ class DevOsWorkspaceMutexTest {
                 "write to repo: commit A",
                 "CMUTEX/1000000002.000001",
                 null, null, null,
-                true, WORKSPACE_KEY
+                true, WORKSPACE_KEY, null, null, null
         ));
         Long action1Id = resp1.actionId();
 
@@ -179,7 +179,7 @@ class DevOsWorkspaceMutexTest {
                 "write to repo: commit B",
                 "CMUTEX/1000000002.000002",
                 null, null, null,
-                true, WORKSPACE_KEY
+                true, WORKSPACE_KEY, null, null, null
         ));
         Long action2Id = resp2.actionId();
 
@@ -225,7 +225,7 @@ class DevOsWorkspaceMutexTest {
                 "write to repo: exclusive",
                 "CMUTEX/1000000003.000001",
                 null, null, null,
-                true, WORKSPACE_KEY
+                true, WORKSPACE_KEY, null, null, null
         ));
         Long action1Id = resp1.actionId();
 
@@ -234,7 +234,7 @@ class DevOsWorkspaceMutexTest {
                 "read from repo: read-only check",
                 "CMUTEX/1000000003.000002",
                 null, null, null,
-                false, WORKSPACE_KEY
+                false, WORKSPACE_KEY, null, null, null
         ));
         Long action2Id = resp2.actionId();
 
@@ -273,7 +273,7 @@ class DevOsWorkspaceMutexTest {
                 "write to repo: blocked writer",
                 "CMUTEX/1000000004.000001",
                 null, null, null,
-                true, WORKSPACE_KEY
+                true, WORKSPACE_KEY, null, null, null
         ));
         Long action1Id = resp1.actionId();
 
@@ -281,7 +281,7 @@ class DevOsWorkspaceMutexTest {
                 "write to repo: waiting writer",
                 "CMUTEX/1000000004.000002",
                 null, null, null,
-                true, WORKSPACE_KEY
+                true, WORKSPACE_KEY, null, null, null
         ));
         Long action2Id = resp2.actionId();
 

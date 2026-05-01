@@ -25,6 +25,7 @@ declare -a PATTERNS=(
 EXCLUDES=(
   '.git'
   'target'
+  '.env'                    # local secrets file — gitignored, never committed
   '.env.example'            # template file — allowed to contain placeholder text
   'secret_scan.sh'          # this script contains the patterns themselves
   'test_runtime_config.py'  # contains fake token fixtures for redact_secret() tests

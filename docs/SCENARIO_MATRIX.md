@@ -392,10 +392,67 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 
 ---
 
+## Stage 7 — Dry-Run Coding / Patch Preview Executor (COMPLETED)
+
+**Goal**: Devin-like dry-run coding capability: worker creates an isolated workspace copy, applies deterministic text replacement, generates a unified diff, and returns a `[PATCH_PREVIEW]` response — original repo file is **never** modified.
+
+**Validation**: ✅ 108 Java + 37 Python tests, 0 failures. `test_patch_preview.py` (10 tests). `run_patch_preview_e2e.sh` PASSED. Original file invariant held. B-017 complete.
+
+### Scenario 7.1 — Patch Preview with Deterministic Replace ✅
+
+| Step | Component | Expected |
+|---|---|---|
+| `POST /devos/start` with `mode=patch_preview`, `replaceFrom`, `replaceTo` | `DevOsController` → `DevOsService` | `{actionId, status:"QUEUED"}` |
+| Payload includes `mode`, `replace_from`, `replace_to` | `DevOsService.buildPayload()` | JSON payload contains all 3 new fields |
+| Worker routes to patch preview path | `execute()` checks `mode == "patch_preview"` | Calls `execute_patch_preview()` |
+| Workspace copy created | `repo.create_workspace_copy` tool | `/tmp/devos-workspaces/<actionId>/README.md` created |
+| Replacement applied in workspace copy | `repo.replace_in_file_preview` tool | Workspace file modified; original file unchanged |
+| Unified diff generated | `repo.diff_workspace` tool | `difflib.unified_diff` output |
+| Response posted to Slack | `post_to_slack()` | Contains `[PATCH_PREVIEW]` + diff excerpt |
+| **INVARIANT** | Original `repo_path/file_path` file | `"Hello Old Title"` still present, no `"Hello Slack Dev OS"` |
+
+**Security invariants**:
+- `file_path` must be relative (absolute path → `ok=False`)
+- `file_path` must not contain `..` (path traversal → `ok=False`)
+- `workspace_file` must be under `_PATCH_WORKSPACE_ROOT=/tmp/devos-workspaces` (boundary enforcement)
+- No arbitrary shell command execution
+- Workspace directory cleaned up after diff captured
+
+### Scenario 7.2 — Patch Plan Only (No replaceFrom) ✅
+
+| Input | Expected |
+|---|---|
+| `mode=patch_preview`, `replaceFrom` absent/empty | LLM called with file content + user request |
+| DEMO_MODE | `[DEMO PATCH_PLAN_ONLY]` stub returned |
+| Non-DEMO_MODE | `[PATCH_PLAN_ONLY]\n<llm plan>` returned |
+| Workspace | Created then immediately cleaned up (no patch applied) |
+
+### Scenario 7.3 — Unknown Mode Fallback ✅
+
+| Input | Expected |
+|---|---|
+| `mode="something_unknown"` | Falls through to normal devos_chat LLM path |
+| `mode=null` or absent | Normal path (backward compatible) |
+
+### Scenario 7.4 — Tool Security Boundary (B-017) ✅
+
+| Tool | Security Check | Invariant |
+|---|---|---|
+| `repo.create_workspace_copy` | `file_path` absolute path | `ok=False, "absolute"` |
+| `repo.create_workspace_copy` | `file_path` with `..` | `ok=False, ".."`or `"escape"` |
+| `repo.replace_in_file_preview` | `workspace_file` outside workspace root | `ok=False, "outside"` |
+| `repo.diff_workspace` | `workspace_file` outside workspace root | `ok=False, "outside"` |
+| `repo.replace_in_file_preview` | `replace_from` not in file | `ok=False, "not found"` |
+
+**Tests**: `python-workers/devos_chat_worker/test_patch_preview.py` (10 pytest cases).
+**E2E**: `scripts/run_patch_preview_e2e.sh` — creates fixture, posts `patch_preview`, asserts `[PATCH_PREVIEW]` + original file unchanged.
+
+---
+
 ## Status Summary
 
-> **v0.1.0-rc1** — Release Candidate. All scenarios in scope have been implemented and CI-verified.
-> 108 Java tests + 21 Python tests (7 + 14), 0 failures. Two E2E scripts green. No real secrets in CI.
+> **v0.1.0-rc2 + Stage 7** — All scenarios in scope have been implemented and CI-verified.
+> 108 Java tests + 37 Python tests (7 + 14 + 10 + 6), 0 failures. Three E2E scripts green. No real secrets in CI.
 
 | Stage | Name | Status | CI Proof |
 |---|---|---|---|
@@ -408,4 +465,5 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 | 6 | Tool Manager (minimal) | ✅ Complete | 7 Python smoke tests + GHA |
 | 6 | Ownership Guard (B-007) | ✅ Complete | 4 integration tests |
 | 6 | Production Config Readiness (B-010) | ✅ Complete | `test_runtime_config.py` (14 tests) + config check script |
-| 6 | Real Slack + LLM live | 🔶 PARTIAL | Config-ready; no live key in CI (future: B-010-live) |
+| 6 | Real Slack + LLM live | ✅ Complete | Live smoke PASSED 2026-05-01 (C0AV55H69QT) |
+| 7 | Dry-Run Coding / Patch Preview | ✅ Complete | `test_patch_preview.py` (10 tests) + `run_patch_preview_e2e.sh` |

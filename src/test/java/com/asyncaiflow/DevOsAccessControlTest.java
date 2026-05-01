@@ -129,7 +129,7 @@ class DevOsAccessControlTest {
         DevOsStartResponse resp1 = devOsService.start(new DevOsStartRequest(
                 "alpha step 1 — design system",
                 THREAD_ALPHA,
-                null, null, null, null, null
+                null, null, null, null, null, null, null, null
         ));
         Long action1Id = resp1.actionId();
 
@@ -151,7 +151,7 @@ class DevOsAccessControlTest {
         DevOsStartResponse resp2 = devOsService.start(new DevOsStartRequest(
                 "alpha step 2 — implement",
                 THREAD_ALPHA,
-                action1Id, null, null, null, null   // same-thread context restore
+                action1Id, null, null, null, null, null, null, null // same-thread context restore, null, null, null
         ));
 
         ActionEntity action2 = actionMapper.selectById(resp2.actionId());
@@ -178,7 +178,7 @@ class DevOsAccessControlTest {
         DevOsStartResponse respAlpha = devOsService.start(new DevOsStartRequest(
                 "alpha task — contains secrets",
                 THREAD_ALPHA,
-                null, null, null, null, null
+                null, null, null, null, null, null, null, null
         ));
         Long alphaActionId = respAlpha.actionId();
 
@@ -193,7 +193,7 @@ class DevOsAccessControlTest {
                 devOsService.start(new DevOsStartRequest(
                         "beta task attempting to steal alpha context",
                         THREAD_BETA,
-                        alphaActionId, null, null, null, null   // cross-thread prevActionId!
+                        alphaActionId, null, null, null, null, null, null, null // cross-thread prevActionId!, null, null, null
                 )),
                 "Cross-thread prevActionId must throw ApiException (403)"
         );
@@ -227,7 +227,7 @@ class DevOsAccessControlTest {
         DevOsStartResponse resp = devOsService.start(new DevOsStartRequest(
                 "alpha task to cancel",
                 THREAD_ALPHA,
-                null, null, null, null, null
+                null, null, null, null, null, null, null, null
         ));
         Long actionId = resp.actionId();
 
@@ -261,7 +261,7 @@ class DevOsAccessControlTest {
         DevOsStartResponse resp = devOsService.start(new DevOsStartRequest(
                 "alpha task — should not be interruptible by beta",
                 THREAD_ALPHA,
-                null, null, null, null, null
+                null, null, null, null, null, null, null, null
         ));
         Long actionId = resp.actionId();
 

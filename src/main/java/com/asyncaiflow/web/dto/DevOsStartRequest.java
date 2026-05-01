@@ -16,6 +16,14 @@ import jakarta.validation.constraints.NotBlank;
  * writeIntent（可选）：true 表示此 Action 将写入 workspace/repo，需持有 workspace 互斥锁。
  * workspaceKey（可选）：互斥锁的 key（通常为 "repoPath" 或 "workspace:name"）。
  *   仅在 writeIntent=true 时生效；同一 workspaceKey 同时只允许一个 RUNNING writer。
+ *
+ * mode（可选）：执行模式。
+ *   "patch_preview" — B-017 dry-run coding worker：生成 unified diff，不写回原 repo。
+ *   其他值或 null — 默认 devos_chat 模式。
+ *
+ * replaceFrom / replaceTo（可选）：用于 patch_preview 的确定性替换指令。
+ *   若同时提供，worker 将执行 replaceFrom→replaceTo 替换并生成真实 diff。
+ *   不提供时，worker 向 LLM 询问修改计划并返回 [PATCH_PLAN_ONLY]。
  */
 public record DevOsStartRequest(
         @NotBlank(message = "must not be blank") String text,
@@ -24,6 +32,9 @@ public record DevOsStartRequest(
         String repoPath,
         String filePath,
         Boolean writeIntent,
-        String workspaceKey
+        String workspaceKey,
+        String mode,
+        String replaceFrom,
+        String replaceTo
 ) {
 }
