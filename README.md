@@ -634,6 +634,95 @@ DEVOS_MOCK_TEXT='devos: apply 42 confirm' bash scripts/run_slack_bridge_mock.sh
 
 ---
 
+## Slack Socket Mode Adapter (B-023)
+
+Stage 14 adds `socket_mode_adapter.py` — a local process that connects to Slack via Socket Mode (WebSocket, no public URL) and routes real Slack messages through the intent router.
+
+```
+Slack message (real)
+  │  (WebSocket — Socket Mode)
+  ▼
+socket_mode_adapter.handle_socket_mode_request(client, req)
+  ├── ACK envelope (always, before any processing)
+  ├── slack_bridge.handle_slack_event(event, config)
+  │     └── parse_devos_intent() → DevosIntent
+  └── worker.post_to_slack(slackThreadId, replyText)
+```
+
+### One-time Slack App Setup
+
+1. **Enable Socket Mode**  
+   App Settings → Features → Socket Mode → Enable
+
+2. **Create App-Level Token** (xapp-…)  
+   App Settings → Basic Information → App-Level Tokens → Generate Token  
+   Scope: `connections:write`  
+   Copy the token → set as `SLACK_APP_TOKEN`
+
+3. **Bot Token Scopes** (xoxb-…)  
+   OAuth & Permissions → Bot Token Scopes → `chat:write`  
+   (Add `channels:history` if subscribing to channel messages and your app needs it)
+
+4. **Event Subscriptions**  
+   Event Subscriptions → Subscribe to bot events: `message.channels`  
+   (Add `message.im` or `message.groups` as needed)
+
+5. **Reinstall** the app to your workspace after scope changes
+
+6. **Invite bot** to the channel: `/invite @YourBotName`
+
+### Running
+
+```bash
+# 1. Set tokens in .env
+cp python-workers/devos_chat_worker/.env.example python-workers/devos_chat_worker/.env
+# Edit .env: fill SLACK_BOT_TOKEN, SLACK_APP_TOKEN, DEVOS_DEFAULT_REPO_PATH
+
+# 2. Start backend (if not using dry-run)
+mvn spring-boot:run -Dspring-boot.run.profiles=local &
+
+# 3. Start the socket adapter
+source python-workers/devos_chat_worker/.env
+bash scripts/run_slack_socket_mode.sh
+
+# 4. Send a message in Slack:
+# devos: ask hello
+# devos: preview README.md replace "Old Title" with "New Title"
+```
+
+### Dry-run mode (no backend, no Slack post)
+
+```bash
+SLACK_BOT_TOKEN=<your-xoxb-token> SLACK_APP_TOKEN=<your-app-level-token> \
+  DEVOS_SOCKET_DRY_RUN=true bash scripts/run_slack_socket_mode.sh
+```
+
+### Key environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SLACK_APP_TOKEN` | _(required)_ | xapp-… app-level token (scope: connections:write) |
+| `SLACK_BOT_TOKEN` | _(required)_ | xoxb-… bot OAuth token (scope: chat:write) |
+| `DEVOS_SOCKET_DRY_RUN` | `false` | `true` → log only, no backend call, no Slack post |
+| `DEVOS_DEFAULT_REPO_PATH` | _(empty)_ | Required for preview/test/commit intents |
+
+### Safety invariants
+
+| Guard | Behaviour |
+|---|---|
+| ACK-first | Slack envelope is ACK'd before any processing (within 3 s deadline) |
+| Bot/subtype guard | Delegated to `slack_bridge`; bridge returns `handled=False` → no reply |
+| Exception-safe | Exceptions from bridge or post_to_slack are logged; ACK is never blocked |
+| No token printing | `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN` are never logged in full |
+| Dry-run | `DEVOS_SOCKET_DRY_RUN=true` → no backend call, no Slack post |
+| confirm guard | Inherited from B-022: apply/commit still require explicit `confirm` |
+
+**Unit tests:** `python-workers/devos_chat_worker/test_socket_mode_adapter.py` — **23 scenarios, 0 real Slack calls, 0 failures**.
+
+**Status:** `LOCAL_SOCKET_PENDING` — mock tests pass; live Socket Mode verification requires a Slack App with Socket Mode enabled.
+
+---
+
 ## API Reference
 
 ### POST /devos/start

@@ -721,10 +721,54 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 
 ---
 
+## Stage 14: Slack Socket Mode Adapter (B-023) 🔧 LOCAL_SOCKET_PENDING
+
+**Goal**: Accept real Slack message events via Socket Mode (no public endpoint), route through `slack_bridge.handle_slack_event()`, and post replies back via `post_to_slack()`.
+
+| Scenario | Description | Status |
+|---|---|---|
+| 14.1 | Config validation: missing SLACK_APP_TOKEN → RuntimeError | ✅ mock tested |
+| 14.2 | Config validation: missing SLACK_BOT_TOKEN → RuntimeError | ✅ mock tested |
+| 14.3 | Token redaction does not leak full token | ✅ mock tested |
+| 14.4 | Non-events_api envelope (disconnect/hello) is ACK'd and ignored | ✅ mock tested |
+| 14.5 | events_api message event dispatches to handle_slack_event | ✅ mock tested |
+| 14.6 | handled=True + replyText → post_to_slack called with correct args | ✅ mock tested |
+| 14.7 | handled=False → post_to_slack not called | ✅ mock tested |
+| 14.8 | Exception from handle_slack_event is caught; ACK still sent | ✅ mock tested |
+| 14.9 | Exception from post_to_slack does not propagate | ✅ mock tested |
+| 14.10 | dry_run=True → post_to_slack not called | ✅ mock tested |
+| 14.11 | DEVOS_SOCKET_DRY_RUN=true env var respected | ✅ mock tested |
+| 14.12 | Bot message dispatched to bridge; bridge returns handled=False; no reply | ✅ mock tested |
+| 14.13 | message_changed subtype dispatched to bridge; bridge guard → no reply | ✅ mock tested |
+| 14.14 | Live Socket Mode: real Slack message → DevOS reply in thread | ⏳ LOCAL_SOCKET_PENDING |
+
+**New components**:
+- `socket_mode_adapter.py` — SocketModeClient lifecycle, ACK-first handler, config validation, redaction
+- `test_socket_mode_adapter.py` — 18 scenarios, 0 real Slack calls
+- `scripts/run_slack_socket_mode.sh` — env-check + health-check launcher
+- `requirements.txt`: `slack_sdk>=3.27.0`
+- `.env.example`: `SLACK_APP_TOKEN=`, `DEVOS_SOCKET_DRY_RUN=true`
+
+**Slack App setup required** (one-time, not scripted):
+```
+Slack App Settings → Features → Socket Mode → Enable
+Slack App Settings → Basic Information → App-Level Tokens → Create
+  Name: devos-local
+  Scope: connections:write
+  Copy token (xapp-...) → SLACK_APP_TOKEN
+
+OAuth & Permissions → Bot Token Scopes → chat:write
+Event Subscriptions → Subscribe to bot events → message.channels
+                                              (+ message.im if direct messages needed)
+/invite @YourBotName  in the Slack channel
+```
+
+---
+
 ## Status Summary
 
-> **v0.1.0-rc2 + Stage 13** — All scenarios in scope have been implemented and CI-verified.
-> 139 Java tests + 88 Python tests, 0 failures. Seven E2E scripts green + `run_slack_bridge_mock.sh`. No real secrets in CI.
+> **v0.1.0-rc2 + Stage 14** — Socket Mode adapter mock-tested; live Slack connection pending user verification.
+> 139 Java tests + 137 Python tests, 0 failures. Seven E2E scripts green + `run_slack_bridge_mock.sh`. No real secrets in CI.
 
 | Stage | Name | Status | CI Proof |
 |---|---|---|---|
@@ -745,3 +789,4 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 | 11 | Human Git Commit Snapshot | ✅ Complete | `DevOsGitCommitTest` (10 tests) + `run_git_commit_e2e.sh` |
 | 12 | Slack Minimal Loop Bridge | ✅ Complete | `test_slack_bridge.py` (10 tests) + `run_slack_bridge_mock.sh` |
 | 13 | Slack Command Intent Router | ✅ Complete | `test_slack_bridge.py` (60 tests) + `run_slack_bridge_mock.sh` |
+| 14 | Slack Socket Mode Adapter | 🔧 LOCAL_SOCKET_PENDING | `test_socket_mode_adapter.py` (23 tests) + `run_slack_socket_mode.sh` |

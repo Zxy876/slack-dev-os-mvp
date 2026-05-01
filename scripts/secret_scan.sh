@@ -28,8 +28,9 @@ EXCLUDES=(
   '.env'                    # local secrets file — gitignored, never committed
   '.env.example'            # template file — allowed to contain placeholder text
   'secret_scan.sh'          # this script contains the patterns themselves
-  'test_runtime_config.py'  # contains fake token fixtures for redact_secret() tests
-  'test_slack_posting.py'   # contains fake Slack token fixtures for mock tests
+  'test_runtime_config.py'        # contains fake token fixtures for redact_secret() tests
+  'test_slack_posting.py'         # contains fake Slack token fixtures for mock tests
+  'test_socket_mode_adapter.py'   # contains fake xoxb-/xapp- fixtures for socket mode tests
   '*.class'
   '*.jar'
 )
