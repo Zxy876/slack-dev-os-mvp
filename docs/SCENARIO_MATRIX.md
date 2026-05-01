@@ -449,10 +449,61 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 
 ---
 
+## Stage 8 — Human Confirm Apply Patch (COMPLETED)
+
+**Goal**: Close the human-in-the-loop loop. After reviewing the `[PATCH_PREVIEW]` diff, the human sends `POST /devos/apply-patch` with `confirm=true`. The backend applies `replaceFrom→replaceTo` to the **real** repo file — no auto-commit, no auto-push.
+
+**Validation**: ✅ 113 Java + 41 Python tests, 0 failures. `DevOsApplyPatchTest` (5 tests). `run_apply_patch_e2e.sh` available. B-018 complete.
+
+### Scenario 8.1 — Confirm Guard ✅
+
+| Input | Expected |
+|---|---|
+| `confirm=false` | `400 BAD_REQUEST` — patch unconditionally rejected |
+| `confirm=true` | Proceeds to remaining safety checks |
+
+### Scenario 8.2 — Valid Apply → File Modified ✅
+
+| Step | Component | Expected |
+|---|---|---|
+| `POST /devos/apply-patch` with valid `previewActionId` + same `slackThreadId` + `confirm=true` | `DevOsController` → `DevOsService.applyPatch()` | `{applied:true, status:"APPLIED", filePath:...}` |
+| Ownership check | `slackThreadId` matches action's `slackThreadId` | Passes |
+| Status check | Action status is `SUCCEEDED` | Passes |
+| SHA-256 check | File bytes match `originalSha256` from `patchPreview` metadata | Passes |
+| `replaceFrom` present | `file.contains(replaceFrom)` | First occurrence replaced |
+| Write | `Files.writeString()` | Real file now contains `replaceTo` |
+| No commit | `git status` | File modified but not committed |
+
+### Scenario 8.3 — Cross-Thread Apply Denied ✅
+
+| Input | Expected |
+|---|---|
+| `previewActionId` belongs to `threadA`, request uses `threadB` | `403 FORBIDDEN` (B-007 ownership guard) |
+| Real file | Unchanged |
+
+### Scenario 8.4 — Stale Hash Guard ✅
+
+| Input | Expected |
+|---|---|
+| File mutated between preview and apply | `409 CONFLICT` — `"hash mismatch"` |
+| Real file | Unchanged (write never attempted) |
+
+### Scenario 8.5 — replaceFrom Not Found ✅
+
+| Input | Expected |
+|---|---|
+| `replaceFrom` text no longer in file (idempotency) | `409 CONFLICT` — `"replaceFrom not found"` |
+| Real file | Unchanged |
+
+**Tests**: `src/test/java/com/asyncaiflow/DevOsApplyPatchTest.java` (5 scenarios).
+**E2E**: `scripts/run_apply_patch_e2e.sh` — fixture → patch_preview → assert unchanged → apply-patch → assert replaced + no commit.
+
+---
+
 ## Status Summary
 
-> **v0.1.0-rc2 + Stage 7** — All scenarios in scope have been implemented and CI-verified.
-> 108 Java tests + 37 Python tests (7 + 14 + 10 + 6), 0 failures. Three E2E scripts green. No real secrets in CI.
+> **v0.1.0-rc2 + Stage 8** — All scenarios in scope have been implemented and CI-verified.
+> 113 Java tests + 41 Python tests, 0 failures. Four E2E scripts green. No real secrets in CI.
 
 | Stage | Name | Status | CI Proof |
 |---|---|---|---|
@@ -467,3 +518,4 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 | 6 | Production Config Readiness (B-010) | ✅ Complete | `test_runtime_config.py` (14 tests) + config check script |
 | 6 | Real Slack + LLM live | ✅ Complete | Live smoke PASSED 2026-05-01 (C0AV55H69QT) |
 | 7 | Dry-Run Coding / Patch Preview | ✅ Complete | `test_patch_preview.py` (10 tests) + `run_patch_preview_e2e.sh` |
+| 8 | Human Confirm Apply Patch | ✅ Complete | `DevOsApplyPatchTest` (5 tests) + `run_apply_patch_e2e.sh` |

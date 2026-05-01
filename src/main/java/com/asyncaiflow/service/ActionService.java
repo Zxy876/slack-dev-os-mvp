@@ -118,6 +118,14 @@ public class ActionService {
         );
     }
 
+    /**
+     * B-018 — Return the JSON result node of the latest SUCCEEDED log for an action.
+     * Returns NullNode when there is no suitable log.
+     */
+    public JsonNode getLatestSucceededResult(Long actionId) {
+        return loadLatestResultNode(actionId);
+    }
+
     @Transactional
     public ActionResponse createAction(CreateActionRequest request) {
         WorkflowEntity workflow = workflowService.requireWorkflow(request.workflowId());

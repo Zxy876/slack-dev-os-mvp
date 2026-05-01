@@ -7,6 +7,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.asyncaiflow.service.DevOsService;
 import com.asyncaiflow.web.ApiResponse;
+import com.asyncaiflow.web.dto.DevOsApplyPatchRequest;
+import com.asyncaiflow.web.dto.DevOsApplyPatchResponse;
 import com.asyncaiflow.web.dto.DevOsInterruptRequest;
 import com.asyncaiflow.web.dto.DevOsInterruptResponse;
 import com.asyncaiflow.web.dto.DevOsStartRequest;
@@ -97,5 +99,45 @@ public class DevOsController {
     public ApiResponse<DevOsInterruptResponse> interrupt(@Valid @RequestBody DevOsInterruptRequest request) {
         DevOsInterruptResponse response = devOsService.interrupt(request);
         return ApiResponse.ok("action interrupted", response);
+    }
+
+    /**
+     * B-018 — Human Confirm Apply Patch.
+     *
+     * <pre>
+     * POST /devos/apply-patch
+     * {
+     *   "previewActionId": 123,
+     *   "slackThreadId": "C1234567890/1234567890.123456",
+     *   "confirm": true
+     * }
+     * </pre>
+     *
+     * 响应：
+     * <pre>
+     * {
+     *   "success": true,
+     *   "data": {
+     *     "previewActionId": 123,
+     *     "status": "APPLIED",
+     *     "filePath": "README.md",
+     *     "applied": true,
+     *     "message": "Patch applied to README.md; no git commit was made"
+     *   }
+     * }
+     * </pre>
+     *
+     * 安全不变量：
+     *  - confirm 必须为 true
+     *  - previewActionId 必须属于同一 slackThreadId（B-007）
+     *  - previewAction 必须是 SUCCEEDED 状态
+     *  - 文件路径必须安全（相对路径，无 ".."，在 repoPath 内）
+     *  - originalSha256 校验：文件若被改动则拒绝
+     *  - 不 git commit，不 git push
+     */
+    @PostMapping("/apply-patch")
+    public ApiResponse<DevOsApplyPatchResponse> applyPatch(@Valid @RequestBody DevOsApplyPatchRequest request) {
+        DevOsApplyPatchResponse response = devOsService.applyPatch(request);
+        return ApiResponse.ok("patch applied", response);
     }
 }

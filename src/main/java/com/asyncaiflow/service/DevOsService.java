@@ -1,6 +1,13 @@
 package com.asyncaiflow.service;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.util.HexFormat;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -14,11 +21,14 @@ import com.asyncaiflow.mapper.ActionMapper;
 import com.asyncaiflow.mapper.WorkflowMapper;
 import com.asyncaiflow.service.queue.ActionQueueService;
 import com.asyncaiflow.support.ApiException;
+import com.asyncaiflow.web.dto.DevOsApplyPatchRequest;
+import com.asyncaiflow.web.dto.DevOsApplyPatchResponse;
 import com.asyncaiflow.web.dto.DevOsInterruptRequest;
 import com.asyncaiflow.web.dto.DevOsInterruptResponse;
 import com.asyncaiflow.web.dto.DevOsStartRequest;
 import com.asyncaiflow.web.dto.DevOsStartResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
@@ -208,5 +218,213 @@ public class DevOsService {
     private static String truncate(String s, int maxLen) {
         if (s == null) return "";
         return s.length() <= maxLen ? s : s.substring(0, maxLen) + "...";
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // B-018 Human Confirm Apply Patch
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Apply a previously generated patch preview to the real file.
+     *
+     * Safety invariants:
+     *  1. confirm must be true
+     *  2. previewAction must exist and belong to the same slackThreadId (B-007)
+     *  3. previewAction must be SUCCEEDED
+     *  4. patchPreview metadata must be present in action log result (or payload fallback)
+     *  5. filePath must be relative, no "..", resolved within repoPath
+     *  6. replaceFrom must exist in current file
+     *  7. If originalSha256 present: current file hash must match (stale-patch guard)
+     *  8. Only first occurrence is replaced (idempotent for deterministic patches)
+     *  9. No git commit, no git push, no shell execution
+     */
+    public DevOsApplyPatchResponse applyPatch(DevOsApplyPatchRequest request) {
+        // 1. confirm guard
+        if (!Boolean.TRUE.equals(request.confirm())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "confirm must be true to apply patch; set confirm=true to proceed");
+        }
+
+        // 2. load preview action
+        ActionEntity preview = actionMapper.selectById(request.previewActionId());
+        if (preview == null) {
+            throw new ApiException(HttpStatus.NOT_FOUND,
+                    "Preview action not found: " + request.previewActionId());
+        }
+
+        // 3. B-007 ownership check
+        if (preview.getSlackThreadId() == null
+                || !request.slackThreadId().equals(preview.getSlackThreadId())) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "Cross-thread apply denied: action " + request.previewActionId()
+                    + " belongs to a different slackThread");
+        }
+
+        // 4. status must be SUCCEEDED
+        if (!ActionStatus.SUCCEEDED.name().equals(preview.getStatus())) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Preview action is not SUCCEEDED (status=" + preview.getStatus()
+                    + "); only SUCCEEDED patch previews can be applied");
+        }
+
+        // 5. extract patchPreview metadata — action log result first, payload as fallback
+        JsonNode patchMeta = extractPatchMeta(request.previewActionId(), preview.getPayload());
+        if (patchMeta == null || patchMeta.isNull() || patchMeta.isMissingNode()) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "No patchPreview metadata found in action result or payload for action "
+                    + request.previewActionId()
+                    + "; was this action created with mode=patch_preview?");
+        }
+
+        String repoPath    = patchMeta.path("repoPath").asText(null);
+        String filePath    = patchMeta.path("filePath").asText(null);
+        String replaceFrom = patchMeta.path("replaceFrom").asText(null);
+        String replaceTo   = patchMeta.path("replaceTo").asText("");
+        String storedHash  = patchMeta.path("originalSha256").asText(null);
+
+        if (repoPath == null || filePath == null || replaceFrom == null
+                || repoPath.isBlank() || filePath.isBlank() || replaceFrom.isBlank()) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "Incomplete patchPreview metadata: repoPath, filePath, replaceFrom are required");
+        }
+
+        // 6. path safety validation
+        validateApplyPaths(repoPath, filePath);
+
+        // Resolve real file path
+        Path realRepo;
+        Path candidateFile;
+        try {
+            realRepo      = Path.of(repoPath).toRealPath();
+            candidateFile = realRepo.resolve(filePath).normalize();
+        } catch (IOException e) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "Cannot resolve repoPath: " + repoPath + " — " + e.getMessage());
+        }
+        if (!candidateFile.startsWith(realRepo)) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "Resolved file path escapes repo boundary");
+        }
+        if (!Files.isRegularFile(candidateFile)) {
+            throw new ApiException(HttpStatus.NOT_FOUND,
+                    "Target file not found: " + filePath);
+        }
+
+        // 7. read current file
+        byte[] currentBytes;
+        String currentContent;
+        try {
+            currentBytes  = Files.readAllBytes(candidateFile);
+            currentContent = new String(currentBytes, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Cannot read target file: " + filePath + " — " + e.getMessage());
+        }
+
+        // 8. stale-patch guard: compare file hash against preview-time hash
+        if (storedHash != null && !storedHash.isBlank()) {
+            String currentHash = sha256Hex(currentBytes);
+            if (!storedHash.equals(currentHash)) {
+                throw new ApiException(HttpStatus.CONFLICT,
+                        "File has changed since patch preview was generated (hash mismatch); "
+                        + "re-run patch_preview before applying");
+            }
+        }
+
+        // 9. replaceFrom must exist in current file
+        if (!currentContent.contains(replaceFrom)) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "replaceFrom text not found in current file; "
+                    + "patch cannot be applied (file may have changed)");
+        }
+
+        // 10. apply — replace only the first occurrence
+        int idx = currentContent.indexOf(replaceFrom);
+        String newContent = currentContent.substring(0, idx)
+                + replaceTo
+                + currentContent.substring(idx + replaceFrom.length());
+
+        try {
+            Files.writeString(candidateFile, newContent, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Cannot write target file: " + filePath + " — " + e.getMessage());
+        }
+
+        return new DevOsApplyPatchResponse(
+                request.previewActionId(),
+                "APPLIED",
+                filePath,
+                true,
+                "Patch applied to " + filePath + "; no git commit was made"
+        );
+    }
+
+    /**
+     * Extract patchPreview JSON from the action log result, with fallback to payload.
+     * Returns null if metadata cannot be found.
+     */
+    private JsonNode extractPatchMeta(Long actionId, String payloadJson) {
+        // Primary: action log result (set by worker in B-017 / B-018 metadata fix)
+        JsonNode resultNode = actionService.getLatestSucceededResult(actionId);
+        if (resultNode != null && !resultNode.isNull() && !resultNode.isMissingNode()) {
+            JsonNode meta = resultNode.path("patchPreview");
+            if (!meta.isMissingNode() && !meta.isNull() && meta.isObject()) {
+                return meta;
+            }
+        }
+
+        // Fallback: reconstruct from payload (for legacy actions without patchPreview in result)
+        if (payloadJson == null || payloadJson.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode payload = objectMapper.readTree(payloadJson);
+            String repoPath    = payload.path("repo_path").asText(null);
+            String filePath    = payload.path("file_path").asText(null);
+            String replaceFrom = payload.path("replace_from").asText(null);
+            String replaceTo   = payload.path("replace_to").asText("");
+            if (repoPath == null || filePath == null || replaceFrom == null) {
+                return null;
+            }
+            ObjectNode meta = objectMapper.createObjectNode();
+            meta.put("mode", "replace");
+            meta.put("repoPath", repoPath);
+            meta.put("filePath", filePath);
+            meta.put("replaceFrom", replaceFrom);
+            meta.put("replaceTo", replaceTo);
+            // No originalSha256 in payload fallback — hash check is skipped
+            return meta;
+        } catch (JsonProcessingException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Validate that filePath is relative, contains no "..", and resolves inside repoPath.
+     * Throws ApiException(400/403) on violation.
+     */
+    private static void validateApplyPaths(String repoPath, String filePath) {
+        if (filePath.startsWith("/") || filePath.startsWith("\\")) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "filePath must be relative, not absolute");
+        }
+        Path norm = Path.of(filePath).normalize();
+        for (Path part : norm) {
+            if ("..".equals(part.toString())) {
+                throw new ApiException(HttpStatus.BAD_REQUEST,
+                        "filePath must not contain '..'");
+            }
+        }
+    }
+
+    private static String sha256Hex(byte[] data) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] hash = md.digest(data);
+            return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 not available", e);
+        }
     }
 }

@@ -323,6 +323,53 @@ SKIP_BACKEND=1 bash scripts/run_patch_preview_e2e.sh
 
 ---
 
+## Human Confirm Apply Patch (B-018)
+
+Stage 8 closes the human-in-the-loop loop: after reviewing the patch preview diff, the human explicitly confirms the patch. The backend applies `replaceFrom→replaceTo` to the **real** repo file — no auto-commit, no auto-push.
+
+**Data flow:**
+```
+# 1. After reviewing the [PATCH_PREVIEW] diff, human confirms:
+POST /devos/apply-patch {
+  "previewActionId": 42,
+  "slackThreadId":   "C08XXXXXX/1234567890.123456",
+  "confirm":          true
+}
+
+# 2. Backend safety checks (in order):
+#    a. confirm == true  (else 400 BAD_REQUEST)
+#    b. previewActionId belongs to slackThreadId  (else 403 FORBIDDEN)
+#    c. action status == SUCCEEDED  (else 409 CONFLICT)
+#    d. SHA-256 hash of file matches preview-time hash  (else 409 "hash mismatch")
+#    e. replaceFrom exists in file  (else 409 "replaceFrom not found")
+
+# 3. Apply: first-occurrence replace only, write via Files.writeString()
+# 4. Return: { applied: true, status: "APPLIED", filePath: "..." }
+# NO git commit, NO git push
+```
+
+**Safety invariants:**
+
+| Guard | Behaviour |
+|---|---|
+| `confirm=false` | 400 — rejected unconditionally |
+| Cross-thread apply | 403 — slackThreadId ownership enforced (B-007) |
+| Action not SUCCEEDED | 409 — only SUCCEEDED previews can be applied |
+| Stale hash (file changed since preview) | 409 — SHA-256 mismatch, operation aborted |
+| `replaceFrom` not found | 409 — idempotent guard, no partial write |
+| No auto-commit/push | By design — human must run `git commit` manually |
+| Path traversal | Blocked — `filePath` must be relative, no `..` |
+
+**Run the E2E proof:**
+```bash
+# Backend + Redis must already be running
+SKIP_BACKEND=1 bash scripts/run_apply_patch_e2e.sh
+```
+
+**Unit tests:** `src/test/java/com/asyncaiflow/DevOsApplyPatchTest.java` (5 scenarios: confirm=false, valid, cross-thread, stale-hash, replaceFrom-not-found)
+
+---
+
 ## API Reference
 
 ### POST /devos/start

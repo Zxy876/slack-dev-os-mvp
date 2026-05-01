@@ -32,6 +32,7 @@ OS 架构对应：
 from __future__ import annotations
 
 import difflib
+import hashlib
 import json
 import logging
 import os
@@ -792,6 +793,15 @@ def execute_patch_preview(action_id: int, payload: dict, slack_thread_id: Option
 
     original_content = read_resp.content
 
+    # Compute SHA-256 of raw file bytes (for B-018 stale-patch guard)
+    try:
+        _src = os.path.realpath(os.path.join(repo_path, file_path))
+        with open(_src, "rb") as _fh:
+            _raw = _fh.read(_MAX_WORKSPACE_FILE_BYTES)
+        original_sha256 = hashlib.sha256(_raw).hexdigest()
+    except OSError:
+        original_sha256 = ""
+
     # ── Step 2: create workspace copy ──────────────────────
     copy_resp = TOOL_MANAGER.execute(ToolCall(
         name="repo.create_workspace_copy",
@@ -853,7 +863,20 @@ def execute_patch_preview(action_id: int, payload: dict, slack_thread_id: Option
         if slack_thread_id:
             post_to_slack(slack_thread_id, response_text)
 
-        return "SUCCEEDED", {"response": response_text, "notepad": notepad_snapshot}, None
+        return "SUCCEEDED", {
+            "response": response_text,
+            "notepad": notepad_snapshot,
+            # B-018: structured patch metadata for human-confirm apply
+            "patchPreview": {
+                "mode": "replace",
+                "repoPath": repo_path,
+                "filePath": file_path,
+                "replaceFrom": replace_from,
+                "replaceTo": replace_to,
+                "originalSha256": original_sha256,
+                "diff": diff_text,
+            },
+        }, None
 
     # ── Step 3b: LLM patch plan (no replace_from) ─────────
     shutil.rmtree(workspace_dir, ignore_errors=True)  # no actual patch, discard copy
