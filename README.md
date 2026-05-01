@@ -370,6 +370,58 @@ SKIP_BACKEND=1 bash scripts/run_apply_patch_e2e.sh
 
 ---
 
+## Test Command Runner (B-019)
+
+Stage 9 enables post-apply verification: after applying a patch, the human can trigger a test run to verify the code is still healthy. The endpoint executes a single **allowlisted** command inside `repoPath` using `ProcessBuilder` (no shell injection possible).
+
+**Data flow:**
+```
+POST /devos/run-test {
+  "repoPath":       "/path/to/local/repo",
+  "slackThreadId":  "C08XXXXXX/1234567890.123456",
+  "command":        "bash scripts/secret_scan.sh",
+  "timeoutSeconds": 30
+}
+
+→ { "status": "PASSED", "exitCode": 0, "durationMs": 1234,
+    "stdoutExcerpt": "...", "stderrExcerpt": "...",
+    "command": "bash scripts/secret_scan.sh", "repoPath": "..." }
+```
+
+**Allowlisted commands:**
+
+| Command | Args (ProcessBuilder) |
+|---|---|
+| `mvn test -Dspring.profiles.active=local` | `["mvn","test","-Dspring.profiles.active=local"]` |
+| `python -m pytest` | `["python3","-m","pytest"]` |
+| `bash scripts/secret_scan.sh` | `["bash","scripts/secret_scan.sh"]` |
+| `bash scripts/run_patch_preview_e2e.sh` | `["bash","scripts/run_patch_preview_e2e.sh"]` |
+| `bash scripts/run_apply_patch_e2e.sh` | `["bash","scripts/run_apply_patch_e2e.sh"]` |
+
+**Safety invariants:**
+
+| Guard | Behaviour |
+|---|---|
+| Command not in allowlist | 400 BAD_REQUEST — error message mentions "allowlist" |
+| Shell injection attempt | 400 — exact key match required; `"; rm -rf /"` suffix never matches |
+| `repoPath` not a directory | 400 — validated with `Files.isDirectory(Path.of(repoPath).toRealPath())` |
+| Test command exits nonzero | HTTP 200, `status="FAILED"`, `exitCode=<n>` — not a system error |
+| Timeout exceeded | Returns `FAILED / exitCode=-1 / "timed out"` (process killed) |
+| `timeoutSeconds > 180` | Silently clamped to 180 |
+| `timeoutSeconds == null` | Defaults to 120s |
+| No `sh -c` / no shell expansion | `ProcessBuilder(args)` with explicit list; `cwd=repoPath` |
+| No auto-fix / auto-commit | By design — human reviews output and decides next action |
+
+**Run the E2E proof:**
+```bash
+# Backend + Redis must already be running
+SKIP_BACKEND=1 bash scripts/run_test_runner_e2e.sh
+```
+
+**Unit tests:** `src/test/java/com/asyncaiflow/DevOsRunTestTest.java` (9 scenarios: allowed→PASSED, disallowed×3→400, repoPath-missing→400, repoPath-is-file→400, fixture-fail→FAILED not 500, timeout-clamp, timeout-null)
+
+---
+
 ## API Reference
 
 ### POST /devos/start
@@ -514,7 +566,7 @@ GET /action/1
 
 ## Roadmap
 
-See [docs/SCENARIO_MATRIX.md](docs/SCENARIO_MATRIX.md) for the full 7-stage kernel scenario matrix:
+See [docs/SCENARIO_MATRIX.md](docs/SCENARIO_MATRIX.md) for the full 9-stage kernel scenario matrix:
 
 - **Stage 0** (✅ Complete): Syscall, PCB, capability dispatch, worker, DEMO stub, notepad, local E2E
 - **Stage 1** (✅ Complete): GitHub Actions CI proof (mvn test + DEMO E2E)
@@ -522,8 +574,10 @@ See [docs/SCENARIO_MATRIX.md](docs/SCENARIO_MATRIX.md) for the full 7-stage kern
 - **Stage 3** (✅ Complete): Fault tolerance — Watchdog/Lease/Retry (B-002, 3 tests) + User Interrupt B-003 (4 tests) + DAG acyclicity B-004 (4 tests: `wouldCreateCycle` BFS, linear chain unlock, direct/indirect cycle detection)
 - **Stage 4** (✅ Complete): Disk/Page Fault — `repoPath`+`filePath` payload 透传，`safe_read_repo_file` 安全校验，[PAGE_IN] marker 注入，[page-in] notepad 记录；2 集成测试 + Page Fault E2E PASSED
 - **Stage 5** (✅ Complete): Single-writer mutex — `writeIntent`/`workspaceKey`, Redis SETNX, 4 tests (`DevOsWorkspaceMutexTest`)
-- **Stage 6** (✅ Partial): Tool Manager — `ToolCall`/`ToolResponse`/`ToolManager`, whitelist `{repo.read_file}`, Page Fault → `TOOL_MANAGER.execute()`, 7 Python smoke tests; Ownership Guard — `slackThreadId` scope boundary, cross-thread 403, 4 Java integration tests; Production Config (B-010) — `select_llm_backend()`, `validate_runtime_config()`, `redact_secret()`, 14 Python tests, dry-run config check script
-- **Stage 6** (🔶 Partial): Real Slack slash command + LLM keys — B-010 production config boundary done (14 Python tests, dry-run script, .env.example); live Slack/LLM integration not yet wired in CI
+- **Stage 6** (✅ Complete): Tool Manager — `ToolCall`/`ToolResponse`/`ToolManager`, whitelist `{repo.read_file}`, Page Fault → `TOOL_MANAGER.execute()`, 7 Python smoke tests; Ownership Guard — `slackThreadId` scope boundary, cross-thread 403, 4 Java integration tests; Production Config (B-010) — `select_llm_backend()`, `validate_runtime_config()`, `redact_secret()`, 14 Python tests, dry-run config check script; live Slack smoke PASSED 2026-05-01
+- **Stage 7** (✅ Complete): Dry-Run Coding / Patch Preview — `mode=patch_preview`, `execute_patch_preview()`, workspace isolation, `[PATCH_PREVIEW]` diff, original file unchanged invariant; 10 Python tests + `run_patch_preview_e2e.sh`
+- **Stage 8** (✅ Complete): Human Confirm Apply Patch — `POST /devos/apply-patch`: confirm guard, B-007 ownership, SHA-256 stale-hash guard, replaceFrom check, write-once, no auto-commit; 5 Java tests + `run_apply_patch_e2e.sh`
+- **Stage 9** (✅ Complete): Test Command Runner — `POST /devos/run-test`: allowlist-only ProcessBuilder execution, timeout clamp(1–180s), PASSED/FAILED status, HTTP 200 on test failure, no auto-fix/commit; 9 Java tests + `run_test_runner_e2e.sh`
 
 ## Scope
 

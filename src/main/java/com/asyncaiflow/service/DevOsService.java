@@ -1,6 +1,7 @@
 package com.asyncaiflow.service;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -8,6 +9,9 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -25,6 +29,8 @@ import com.asyncaiflow.web.dto.DevOsApplyPatchRequest;
 import com.asyncaiflow.web.dto.DevOsApplyPatchResponse;
 import com.asyncaiflow.web.dto.DevOsInterruptRequest;
 import com.asyncaiflow.web.dto.DevOsInterruptResponse;
+import com.asyncaiflow.web.dto.DevOsRunTestRequest;
+import com.asyncaiflow.web.dto.DevOsRunTestResponse;
 import com.asyncaiflow.web.dto.DevOsStartRequest;
 import com.asyncaiflow.web.dto.DevOsStartResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -426,5 +432,162 @@ public class DevOsService {
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 not available", e);
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // B-019 Test Command Runner
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Allowlist of safe test commands.
+     *
+     * Key   = exact command string (must match request.command() exactly)
+     * Value = ProcessBuilder args (no shell expansion, no arbitrary injection)
+     *
+     * DO NOT add "sh -c", "bash -c", or any command that accepts arbitrary args.
+     */
+    private static final Map<String, List<String>> TEST_COMMAND_ALLOWLIST;
+
+    static {
+        Map<String, List<String>> m = new LinkedHashMap<>();
+        m.put("mvn test -Dspring.profiles.active=local",
+                List.of("mvn", "test", "-Dspring.profiles.active=local"));
+        m.put("python -m pytest",
+                List.of("python3", "-m", "pytest"));
+        m.put("bash scripts/secret_scan.sh",
+                List.of("bash", "scripts/secret_scan.sh"));
+        m.put("bash scripts/run_patch_preview_e2e.sh",
+                List.of("bash", "scripts/run_patch_preview_e2e.sh"));
+        m.put("bash scripts/run_apply_patch_e2e.sh",
+                List.of("bash", "scripts/run_apply_patch_e2e.sh"));
+        TEST_COMMAND_ALLOWLIST = Map.copyOf(m);
+    }
+
+    /** Maximum excerpt length for stdout/stderr captured output. */
+    private static final int MAX_OUTPUT_EXCERPT_CHARS = 8_000;
+
+    /** Default timeout for test commands (seconds). */
+    private static final int DEFAULT_TIMEOUT_SECONDS = 120;
+
+    /** Maximum allowed timeout (seconds). */
+    private static final int MAX_TIMEOUT_SECONDS = 180;
+
+    /**
+     * B-019 — Run an allowlisted test command in the specified repo directory.
+     *
+     * Safety invariants:
+     *  1. slackThreadId required (audit trail)
+     *  2. repoPath must exist and be a directory
+     *  3. repoPath canonical path must not be root "/"
+     *  4. command must be in TEST_COMMAND_ALLOWLIST (exact match)
+     *  5. ProcessBuilder uses explicit args array — no shell expansion
+     *  6. cwd = repoPath (no escaping)
+     *  7. timeout clamped to [1, 180] seconds
+     *  8. test failure (nonzero exit) → FAILED status but HTTP 200; never throws 500
+     *  9. No auto-fix, no commit, no push
+     */
+    public DevOsRunTestResponse runTest(DevOsRunTestRequest request) {
+        // 1. Validate repoPath
+        Path repoDir;
+        try {
+            repoDir = Path.of(request.repoPath()).toRealPath();
+        } catch (IOException e) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "repoPath does not exist or cannot be resolved: " + request.repoPath());
+        }
+        if (!Files.isDirectory(repoDir)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "repoPath is not a directory: " + request.repoPath());
+        }
+        // Guard against running in root
+        if (repoDir.getNameCount() == 0 || "/".equals(repoDir.toString())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "repoPath must not be the filesystem root");
+        }
+
+        // 2. Validate command against allowlist
+        String cmd = request.command().strip();
+        List<String> args = TEST_COMMAND_ALLOWLIST.get(cmd);
+        if (args == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "Command not in allowlist: [" + cmd + "]. Allowed commands: "
+                    + String.join(", ", TEST_COMMAND_ALLOWLIST.keySet()));
+        }
+
+        // 3. Clamp timeout
+        int timeoutSec = request.timeoutSeconds() == null ? DEFAULT_TIMEOUT_SECONDS
+                : Math.max(1, Math.min(request.timeoutSeconds(), MAX_TIMEOUT_SECONDS));
+
+        // 4. Run command via ProcessBuilder
+        long startMs = System.currentTimeMillis();
+        int exitCode;
+        String stdoutExcerpt;
+        String stderrExcerpt;
+
+        try {
+            ProcessBuilder pb = new ProcessBuilder(args);
+            pb.directory(repoDir.toFile());
+            pb.redirectErrorStream(false);
+
+            Process proc = pb.start();
+
+            // Read stdout and stderr concurrently to avoid blocking on full pipe buffer
+            String[] stdoutHolder = {""};
+            String[] stderrHolder = {""};
+
+            Thread stdoutReader = new Thread(() -> {
+                try (InputStream is = proc.getInputStream()) {
+                    stdoutHolder[0] = truncate(new String(is.readAllBytes(), StandardCharsets.UTF_8),
+                            MAX_OUTPUT_EXCERPT_CHARS);
+                } catch (IOException ignored) {}
+            });
+            Thread stderrReader = new Thread(() -> {
+                try (InputStream is = proc.getErrorStream()) {
+                    stderrHolder[0] = truncate(new String(is.readAllBytes(), StandardCharsets.UTF_8),
+                            MAX_OUTPUT_EXCERPT_CHARS);
+                } catch (IOException ignored) {}
+            });
+
+            stdoutReader.start();
+            stderrReader.start();
+
+            boolean finished = proc.waitFor(timeoutSec, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
+                proc.destroyForcibly();
+                stdoutReader.interrupt();
+                stderrReader.interrupt();
+                long durationMs = System.currentTimeMillis() - startMs;
+                return new DevOsRunTestResponse(
+                        "FAILED", -1, durationMs,
+                        stdoutHolder[0],
+                        "Command timed out after " + timeoutSec + "s",
+                        cmd, repoDir.toString()
+                );
+            }
+
+            stdoutReader.join(5_000);
+            stderrReader.join(5_000);
+
+            exitCode = proc.exitValue();
+            stdoutExcerpt = stdoutHolder[0];
+            stderrExcerpt = stderrHolder[0];
+
+        } catch (IOException e) {
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Failed to start test command: " + e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Test command execution was interrupted");
+        }
+
+        long durationMs = System.currentTimeMillis() - startMs;
+        String status = exitCode == 0 ? "PASSED" : "FAILED";
+
+        return new DevOsRunTestResponse(
+                status, exitCode, durationMs,
+                stdoutExcerpt, stderrExcerpt,
+                cmd, repoDir.toString()
+        );
     }
 }

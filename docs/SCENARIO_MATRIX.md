@@ -500,10 +500,59 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 
 ---
 
+## Stage 9 — Test Command Runner / Post-Apply Verification (COMPLETED)
+
+**Goal**: After applying a patch, the human can trigger a test run to verify the code is still healthy. `POST /devos/run-test` executes a single allowlisted command inside `repoPath` using `ProcessBuilder` (no shell). Test failure → `FAILED` with HTTP 200. No auto-fix, no auto-commit.
+
+**Validation**: ✅ 122 Java + 41 Python tests, 0 failures. `DevOsRunTestTest` (9 tests). `run_test_runner_e2e.sh` available. B-019 complete.
+
+### Scenario 9.1 — Allowed Command → PASSED ✅
+
+| Input | Expected |
+|---|---|
+| `command="bash scripts/secret_scan.sh"`, clean repo | `{status:"PASSED", exitCode:0}` |
+| `durationMs` | Non-negative |
+| `stdoutExcerpt` | Non-null string |
+
+### Scenario 9.2 — Disallowed Command → 400 ✅
+
+| Input | Expected |
+|---|---|
+| `command="rm -rf /tmp/evil"` | `400 BAD_REQUEST` — error mentions "allowlist" |
+| `command="bash scripts/secret_scan.sh; rm -rf /"` | `400 BAD_REQUEST` — injection rejected by exact key match |
+| `command="ls -la"` | `400 BAD_REQUEST` — not in allowlist |
+
+### Scenario 9.3 — Invalid repoPath → 400 ✅
+
+| Input | Expected |
+|---|---|
+| `repoPath="/no/such/path"` | `400 BAD_REQUEST` |
+| `repoPath` points at a file (not directory) | `400 BAD_REQUEST` |
+
+### Scenario 9.4 — Command Fails → FAILED Not 500 ✅
+
+| Input | Expected |
+|---|---|
+| Fixture repo with `scripts/secret_scan.sh` returning `exit 1` | `{status:"FAILED", exitCode:1}` |
+| HTTP status | 200 (not 500 — test failure is a business result) |
+| `success` field | `true` |
+
+### Scenario 9.5 — Timeout Clamp ✅
+
+| Input | Expected |
+|---|---|
+| `timeoutSeconds=999` | Clamped to 180, command still runs normally |
+| `timeoutSeconds=null` | Defaults to 120s |
+
+**Tests**: `src/test/java/com/asyncaiflow/DevOsRunTestTest.java` (9 scenarios).
+**E2E**: `scripts/run_test_runner_e2e.sh` — 5 assertions: PASSED, disallowed→400, bad-path→400, fixture-fail→FAILED, timeout-clamp.
+
+---
+
 ## Status Summary
 
-> **v0.1.0-rc2 + Stage 8** — All scenarios in scope have been implemented and CI-verified.
-> 113 Java tests + 41 Python tests, 0 failures. Four E2E scripts green. No real secrets in CI.
+> **v0.1.0-rc2 + Stage 9** — All scenarios in scope have been implemented and CI-verified.
+> 122 Java tests + 41 Python tests, 0 failures. Five E2E scripts green. No real secrets in CI.
 
 | Stage | Name | Status | CI Proof |
 |---|---|---|---|
@@ -519,3 +568,4 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 | 6 | Real Slack + LLM live | ✅ Complete | Live smoke PASSED 2026-05-01 (C0AV55H69QT) |
 | 7 | Dry-Run Coding / Patch Preview | ✅ Complete | `test_patch_preview.py` (10 tests) + `run_patch_preview_e2e.sh` |
 | 8 | Human Confirm Apply Patch | ✅ Complete | `DevOsApplyPatchTest` (5 tests) + `run_apply_patch_e2e.sh` |
+| 9 | Test Command Runner | ✅ Complete | `DevOsRunTestTest` (9 tests) + `run_test_runner_e2e.sh` |

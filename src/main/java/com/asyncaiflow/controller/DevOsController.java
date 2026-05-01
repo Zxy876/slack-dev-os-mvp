@@ -11,6 +11,8 @@ import com.asyncaiflow.web.dto.DevOsApplyPatchRequest;
 import com.asyncaiflow.web.dto.DevOsApplyPatchResponse;
 import com.asyncaiflow.web.dto.DevOsInterruptRequest;
 import com.asyncaiflow.web.dto.DevOsInterruptResponse;
+import com.asyncaiflow.web.dto.DevOsRunTestRequest;
+import com.asyncaiflow.web.dto.DevOsRunTestResponse;
 import com.asyncaiflow.web.dto.DevOsStartRequest;
 import com.asyncaiflow.web.dto.DevOsStartResponse;
 
@@ -139,5 +141,43 @@ public class DevOsController {
     public ApiResponse<DevOsApplyPatchResponse> applyPatch(@Valid @RequestBody DevOsApplyPatchRequest request) {
         DevOsApplyPatchResponse response = devOsService.applyPatch(request);
         return ApiResponse.ok("patch applied", response);
+    }
+
+    /**
+     * B-019 — Run an allowlisted test command in the specified repo.
+     *
+     * <pre>
+     * POST /devos/run-test
+     * {
+     *   "repoPath":      "/Users/dev/my-repo",
+     *   "slackThreadId": "C1234567890/1234567890.123456",
+     *   "command":       "mvn test -Dspring.profiles.active=local",
+     *   "timeoutSeconds": 120
+     * }
+     * </pre>
+     *
+     * 响应 (HTTP 200 always when request is valid):
+     * <pre>
+     * {
+     *   "success": true,
+     *   "data": {
+     *     "status":        "PASSED" | "FAILED",
+     *     "exitCode":      0,
+     *     "durationMs":    12345,
+     *     "stdoutExcerpt": "...",
+     *     "stderrExcerpt": "...",
+     *     "command":       "mvn test -Dspring.profiles.active=local",
+     *     "repoPath":      "/Users/dev/my-repo"
+     *   }
+     * }
+     * </pre>
+     *
+     * 注意：status=FAILED 是测试业务失败，API 层仍返回 success=true。
+     * 仅当 command 不在 allowlist、repoPath 不存在等时返回 4xx。
+     */
+    @PostMapping("/run-test")
+    public ApiResponse<DevOsRunTestResponse> runTest(@Valid @RequestBody DevOsRunTestRequest request) {
+        DevOsRunTestResponse response = devOsService.runTest(request);
+        return ApiResponse.ok("test command executed", response);
     }
 }
