@@ -521,6 +521,63 @@ bash scripts/run_git_commit_e2e.sh
 
 ---
 
+## Slack Minimal Loop Bridge (B-021.5)
+
+Stage 12 introduces the Slack message adapter: when a user posts `devos: <instruction>` in a Slack channel or thread, the bridge parses the message, constructs a `POST /devos/start` payload, and (on success) posts the reply back to the same Slack thread.
+
+**Architecture:**
+```
+Slack message event
+  │
+  ▼
+slack_bridge.handle_slack_event(event)
+  ├── parse_devos_command()    — check "devos:" prefix, extract instruction
+  ├── build_slack_thread_id()  — channel/thread_ts or channel/ts
+  ├── build_devos_start_payload() — {text, slackThreadId, repoPath?}
+  └── call_devos_start()       — POST /devos/start → actionId
+                                   │
+                                   └─▶ post_to_slack(thread_id, reply)
+```
+
+**Dry-run (no Slack token, no backend required):**
+```bash
+# Default: DEVOS_BRIDGE_DRY_RUN=true, prints payload and exits
+bash scripts/run_slack_bridge_mock.sh
+
+# Custom instruction:
+DEVOS_MOCK_TEXT="devos: run all tests" bash scripts/run_slack_bridge_mock.sh
+
+# Real call (backend must be running):
+DEVOS_BRIDGE_DRY_RUN=false ASYNCAIFLOW_URL=http://localhost:8080 \
+  bash scripts/run_slack_bridge_mock.sh
+```
+
+**Key environment variables** (`.env.example`):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DEVOS_BRIDGE_PREFIX` | `devos:` | Message trigger prefix |
+| `DEVOS_DEFAULT_REPO_PATH` | _(empty)_ | Optional repoPath in `/devos/start` payload |
+| `DEVOS_BRIDGE_DRY_RUN` | `true` | Skip backend call, print payload only |
+| `ASYNCAIFLOW_URL` | `http://localhost:8080` | Backend base URL |
+
+**Safety invariants:**
+
+| Guard | Behaviour |
+|---|---|
+| bot/subtype messages ignored | Anti-loop guard: `subtype` or `bot_id` present → skip |
+| Empty instruction ignored | `devos:` with no text → `handled=False` |
+| Dry-run mode | No HTTP request to backend; no Slack token needed |
+| Backend error → safe reply | Exception caught; never propagates; no token in reply |
+| No token printing | `SLACK_BOT_TOKEN` never logged or returned |
+| Bridge-only | Only calls `/devos/start`; never calls apply-patch, run-test, or git-commit |
+
+**Unit tests:** `python-workers/devos_chat_worker/test_slack_bridge.py` (10 scenarios A–J: non-devos ignored, extract instruction, thread_ts priority, ts fallback, bot/subtype ignored, dry-run no backend, backend payload verify, backend error safe reply, default repo path, empty instruction ignored)
+
+**Next step (not yet implemented):** Slack Events API / Socket Mode to receive real Slack events without a public tunnel.
+
+---
+
 ## API Reference
 
 ### POST /devos/start

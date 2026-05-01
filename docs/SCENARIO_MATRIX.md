@@ -635,10 +635,61 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 
 ---
 
+## Stage 12: Slack Minimal Loop Bridge (B-021.5) ✅
+
+**Goal**: 最小 Slack → DevOS 桥接：`devos: <instruction>` 消息 → `POST /devos/start` → Slack 回帖。本地 dry-run 可运行，不需要 Slack Events API、OAuth、Socket Mode 或公网 tunnel。
+
+**Validation**: ✅ `test_slack_bridge.py` 10 tests (A–J). `scripts/run_slack_bridge_mock.sh` dry-run verified. 139 Java + 64+ Python tests, 0 failures.
+
+### Scenario 12.1 — Non-devos message ignored ✅
+
+| Step | Expected |
+|---|---|
+| Slack message `"hello world"` | `parse_devos_command` returns `None` |
+| `handle_slack_event` called | `handled=False`, `reason` contains "not_devos_command" |
+| Backend not called | No HTTP request to `/devos/start` |
+
+### Scenario 12.2 — devos prefix starts action ✅
+
+| Step | Expected |
+|---|---|
+| Slack message `"devos: summarize this repo"` | `parse_devos_command` returns `"summarize this repo"` |
+| `handle_slack_event` calls backend | `POST /devos/start` with `text="summarize this repo"` |
+| Backend returns `actionId=42` | `result.handled=True`, `result.actionId=42` |
+| Reply text | `"DevOS session started — action 42"` |
+
+### Scenario 12.3 — thread_ts mapping ✅
+
+| Step | Expected |
+|---|---|
+| Event has `thread_ts="1710000000.000100"`, `ts="1710000000.000200"` | `build_slack_thread_id` uses `thread_ts` |
+| Event has no `thread_ts` | `build_slack_thread_id` uses `ts` |
+| slackThreadId format | `"channel/ts"` |
+
+### Scenario 12.4 — dry-run no backend ✅
+
+| Step | Expected |
+|---|---|
+| `DEVOS_BRIDGE_DRY_RUN=true` | `handle_slack_event` does not call backend |
+| `handled=True` | Dry-run still counts as handled |
+| `replyText` | Contains `[DRY RUN]` and instruction |
+
+### Scenario 12.5 — backend failure safe reply ✅
+
+| Step | Expected |
+|---|---|
+| Backend returns 5xx or connection error | `RuntimeError` raised in `call_devos_start` |
+| `handle_slack_event` catches exception | `handled=True`, `reason="backend error"` |
+| `replyText` | `"DevOS failed to start: ..."` (no token leak) |
+
+**Mock script**: `scripts/run_slack_bridge_mock.sh` — constructs mock event, calls `handle_slack_event`, prints JSON result. Default `DEVOS_BRIDGE_DRY_RUN=true`.
+
+---
+
 ## Status Summary
 
-> **v0.1.0-rc2 + Stage 11** — All scenarios in scope have been implemented and CI-verified.
-> 139 Java tests + 54 Python tests, 0 failures. Seven E2E scripts green. No real secrets in CI.
+> **v0.1.0-rc2 + Stage 12** — All scenarios in scope have been implemented and CI-verified.
+> 139 Java tests + 64+ Python tests, 0 failures. Seven E2E scripts green + `run_slack_bridge_mock.sh`. No real secrets in CI.
 
 | Stage | Name | Status | CI Proof |
 |---|---|---|---|
@@ -657,3 +708,4 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 | 9 | Test Command Runner | ✅ Complete | `DevOsRunTestTest` (9 tests) + `run_test_runner_e2e.sh` |
 | 10 | One-step Fix Loop | ✅ Complete | `DevOsProposeFixTest` (8 tests) + `test_fix_preview.py` (13 tests) + `run_fix_loop_e2e.sh` |
 | 11 | Human Git Commit Snapshot | ✅ Complete | `DevOsGitCommitTest` (10 tests) + `run_git_commit_e2e.sh` |
+| 12 | Slack Minimal Loop Bridge | ✅ Complete | `test_slack_bridge.py` (10 tests) + `run_slack_bridge_mock.sh` |
