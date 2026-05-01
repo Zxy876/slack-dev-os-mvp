@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -27,6 +28,8 @@ import com.asyncaiflow.service.queue.ActionQueueService;
 import com.asyncaiflow.support.ApiException;
 import com.asyncaiflow.web.dto.DevOsApplyPatchRequest;
 import com.asyncaiflow.web.dto.DevOsApplyPatchResponse;
+import com.asyncaiflow.web.dto.DevOsGitCommitRequest;
+import com.asyncaiflow.web.dto.DevOsGitCommitResponse;
 import com.asyncaiflow.web.dto.DevOsInterruptRequest;
 import com.asyncaiflow.web.dto.DevOsInterruptResponse;
 import com.asyncaiflow.web.dto.DevOsProposeFixRequest;
@@ -693,6 +696,178 @@ public class DevOsService {
         } catch (JsonProcessingException e) {
             // Should never happen with well-formed ObjectNode
             return "{\"user_text\":\"fix_preview\",\"mode\":\"fix_preview\"}";
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // B-021 Human Git Commit Snapshot
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Maximum commit message length (chars). */
+    private static final int MAX_COMMIT_MSG_CHARS = 200;
+
+    /** Maximum diff excerpt length (chars). */
+    private static final int MAX_DIFF_EXCERPT_CHARS = 2_000;
+
+    /** Timeout for git subprocess calls (seconds). */
+    private static final int GIT_TIMEOUT_SECONDS = 30;
+
+    /**
+     * B-021 — Create a local git commit in the specified repo.
+     *
+     * Safety invariants:
+     *  1. confirm must be true
+     *  2. repoPath must exist, be a directory, and be inside a git repo
+     *  3. Commit message length must be ≤ 200 chars
+     *  4. ProcessBuilder with explicit args — no shell expansion, no sh -c
+     *  5. cwd = git top-level of repoPath (resolved by git rev-parse --show-toplevel)
+     *  6. If working tree is clean → return NO_CHANGES, HTTP 200
+     *  7. git add -A, then git commit -m <message>
+     *  8. Return commit hash, changed files, diff excerpt
+     *  9. NEVER git push, NEVER modify remote, NEVER write global git config
+     */
+    public DevOsGitCommitResponse gitCommit(DevOsGitCommitRequest request) {
+        // 1. confirm guard
+        if (!Boolean.TRUE.equals(request.confirm())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "confirm must be true to create a commit; set confirm=true to proceed");
+        }
+
+        // 2. Validate commit message length
+        if (request.message().length() > MAX_COMMIT_MSG_CHARS) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "commit message must be " + MAX_COMMIT_MSG_CHARS + " chars or fewer "
+                    + "(got " + request.message().length() + ")");
+        }
+
+        // 3. Resolve and validate repoPath
+        Path repoDir;
+        try {
+            repoDir = Path.of(request.repoPath()).toRealPath();
+        } catch (IOException e) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "repoPath does not exist or cannot be resolved: " + request.repoPath());
+        }
+        if (!Files.isDirectory(repoDir)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "repoPath is not a directory: " + request.repoPath());
+        }
+        if (repoDir.getNameCount() == 0 || "/".equals(repoDir.toString())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "repoPath must not be the filesystem root");
+        }
+
+        // 4. Verify it is a git repository and resolve top-level
+        String topLevel = runGitCommand(repoDir,
+                List.of("git", "rev-parse", "--show-toplevel"));
+        if (topLevel == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "repoPath is not inside a git repository: " + repoDir);
+        }
+        Path gitRoot;
+        try {
+            gitRoot = Path.of(topLevel.strip()).toRealPath();
+        } catch (IOException e) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "Cannot resolve git top-level: " + topLevel);
+        }
+
+        // 5. Check for uncommitted changes (git status --porcelain)
+        String porcelain = runGitCommand(gitRoot, List.of("git", "status", "--porcelain"));
+        if (porcelain == null || porcelain.isBlank()) {
+            return new DevOsGitCommitResponse(
+                    "NO_CHANGES", null, List.of(),
+                    request.message(),
+                    "Working tree is clean — nothing to commit.",
+                    gitRoot.toString()
+            );
+        }
+
+        // 6. Collect changed file names from porcelain output
+        List<String> changedFiles = new ArrayList<>();
+        for (String line : porcelain.split("\n")) {
+            // Porcelain format: XY<space>filename (positions 0-1=status, 2=space, 3+=name)
+            // Do NOT trim the line before taking substring — it would shift the positions
+            if (line.length() >= 4) {
+                String name = line.substring(3).trim();
+                // For renames "old -> new", take the new name
+                if (name.contains(" -> ")) {
+                    name = name.substring(name.lastIndexOf(" -> ") + 4).trim();
+                }
+                if (!name.isEmpty()) {
+                    changedFiles.add(name);
+                }
+            }
+        }
+
+        // 7. Collect diff excerpt (before git add, so diff reflects working tree)
+        String diffStat = runGitCommand(gitRoot, List.of("git", "diff", "--stat"));
+        String diffExcerpt = truncate(diffStat != null ? diffStat : "", MAX_DIFF_EXCERPT_CHARS);
+
+        // 8. Stage all changes
+        String addOut = runGitCommand(gitRoot, List.of("git", "add", "-A"));
+        // addOut may be null on error; proceed — commit will fail if add did not work
+
+        // 9. Create commit (no push)
+        String commitOut = runGitCommand(gitRoot,
+                List.of("git", "commit", "-m", request.message()));
+        if (commitOut == null) {
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "git commit failed — check that user.name and user.email are configured "
+                    + "in the repository (git config user.email / user.name inside repoPath)");
+        }
+
+        // 10. Retrieve new commit hash
+        String head = runGitCommand(gitRoot, List.of("git", "rev-parse", "HEAD"));
+        String commitHash = head != null ? head.strip() : null;
+
+        return new DevOsGitCommitResponse(
+                "COMMITTED",
+                commitHash,
+                changedFiles,
+                request.message(),
+                diffExcerpt,
+                gitRoot.toString()
+        );
+    }
+
+    /**
+     * Execute a git command via ProcessBuilder in the given directory.
+     *
+     * Returns stdout content (trimmed) on success, null on nonzero exit or error.
+     * Never uses shell expansion. cwd is restricted to the supplied directory.
+     */
+    private String runGitCommand(Path cwd, List<String> args) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder(args);
+            pb.directory(cwd.toFile());
+            pb.redirectErrorStream(false);
+            Process proc = pb.start();
+
+            String[] stdoutHolder = {null};
+            Thread reader = new Thread(() -> {
+                try (InputStream is = proc.getInputStream()) {
+                    stdoutHolder[0] = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+                } catch (IOException ignored) {}
+            });
+            reader.start();
+
+            boolean finished = proc.waitFor(GIT_TIMEOUT_SECONDS,
+                    java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
+                proc.destroyForcibly();
+                return null;
+            }
+            reader.join(3_000);
+
+            int exit = proc.exitValue();
+            if (exit != 0) {
+                return null;
+            }
+            return stdoutHolder[0] != null ? stdoutHolder[0] : "";
+        } catch (IOException | InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
         }
     }
 }

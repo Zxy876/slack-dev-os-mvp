@@ -470,6 +470,57 @@ SKIP_BACKEND=1 bash scripts/run_fix_loop_e2e.sh
 
 ---
 
+## Human Git Commit Snapshot (B-021)
+
+Stage 11 adds the final piece of the local development loop: after reviewing a patch preview and applying it, the human can create a **local git commit** with a single API call — **no push, no remote modification, no global git config writes**.
+
+**Data flow:**
+```
+POST /devos/git-commit {
+  "repoPath":      "/Users/dev/my-repo",
+  "slackThreadId": "C1234567890/1234567890.123456",
+  "message":       "devos: apply README title fix",
+  "confirm":       true
+}
+
+→ {
+    "status":       "COMMITTED",
+    "commitHash":   "a1b2c3d4...",
+    "changedFiles": ["README.md"],
+    "message":      "devos: apply README title fix",
+    "diffExcerpt":  " README.md | 2 +-\n 1 file changed...",
+    "repoPath":     "/Users/dev/my-repo"
+  }
+```
+
+If the working tree is clean, the response is `status=NO_CHANGES` (HTTP 200, not an error).
+
+**Safety invariants:**
+
+| Guard | Behaviour |
+|---|---|
+| `confirm=true` required | Any other value → HTTP 400; no git operation executed |
+| repoPath must be a git repo | `git rev-parse --show-toplevel` must succeed → 400 otherwise |
+| Message length ≤ 200 chars | Enforced at service layer and DTO `@Size(max=200)` |
+| ProcessBuilder explicit args | No `sh -c`, no shell expansion |
+| Never push | `git push` is never called |
+| Never modify remote | No `git remote` commands |
+| Never write global git config | Only fixture repos (tests) set local config |
+| Clean tree → NO_CHANGES | HTTP 200, not an error |
+
+**Run the E2E proof:**
+```bash
+# No backend needed for fixture verification:
+SKIP_BACKEND=1 bash scripts/run_git_commit_e2e.sh
+
+# With backend running:
+bash scripts/run_git_commit_e2e.sh
+```
+
+**Unit tests:** `src/test/java/com/asyncaiflow/DevOsGitCommitTest.java` (10 scenarios: confirm=false→400, confirm=null→400, non-git-dir→400, no-changes→NO_CHANGES, changed-file→COMMITTED, new-file→COMMITTED, message-201-chars→400, message-200-chars-ok, repoPath-not-exist→400, repoPath-is-file→400)
+
+---
+
 ## API Reference
 
 ### POST /devos/start

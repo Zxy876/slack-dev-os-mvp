@@ -553,7 +553,7 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 
 **Goal**: Close the test–fix feedback cycle by queuing a read-only fix-plan action when tests fail.
 
-**Validation**: ✅ 130 Java + 54 Python tests, 0 failures. `DevOsProposeFixTest` (8 tests). `test_fix_preview.py` (13 tests). `run_fix_loop_e2e.sh` (9 assertions). B-020 complete.
+**Validation**: ✅ 129 Java + 54 Python tests, 0 failures. `DevOsProposeFixTest` (8 tests). `test_fix_preview.py` (13 tests). `run_fix_loop_e2e.sh` (9 assertions). B-020 complete.
 
 ### Scenario 10.1 — Valid propose-fix request → QUEUED action with mode=fix_preview ✅
 
@@ -589,10 +589,56 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 
 ---
 
+## Stage 11: Human Git Commit Snapshot (B-021) ✅
+
+**Capability**: `POST /devos/git-commit` — Human-confirmed local-only git commit with no push, no remote modification, and no global git config writes.
+
+**Validation**: ✅ 139 Java + 54 Python tests, 0 failures. `DevOsGitCommitTest` (10 tests). `run_git_commit_e2e.sh` (9 assertions). B-021 complete.
+
+### Scenario 11.1 — confirm=false → 400, no commit executed ✅
+
+**Given**: Valid git repo with pending changes, `confirm=false`\
+**When**: `POST /devos/git-commit`\
+**Then**: HTTP 400, `confirm` mentioned in error, git commit count unchanged
+
+### Scenario 11.2 — Non-git directory → 400 ✅
+
+**Given**: `repoPath` is a regular directory (no `.git`)\
+**When**: `POST /devos/git-commit` with `confirm=true`\
+**Then**: HTTP 400, error mentions git repository
+
+### Scenario 11.3 — Clean working tree → NO_CHANGES (HTTP 200) ✅
+
+**Given**: Git repo with no uncommitted changes, `confirm=true`\
+**When**: `POST /devos/git-commit`\
+**Then**: HTTP 200, `status=NO_CHANGES`, `commitHash=null`, `changedFiles=[]`, no commit added
+
+### Scenario 11.4 — Changed file + confirm=true → COMMITTED ✅
+
+**Given**: Git repo with modified `README.md`, `confirm=true`, valid message\
+**When**: `POST /devos/git-commit`\
+**Then**: HTTP 200, `status=COMMITTED`, `commitHash` is 40-char SHA-1, `changedFiles` includes `README.md`, `git rev-list --count HEAD == 2`
+
+### Scenario 11.5 — Commit message > 200 chars → 400 ✅
+
+**Given**: `message` is 201 characters, `confirm=true`\
+**When**: `POST /devos/git-commit`\
+**Then**: HTTP 400, error mentions 200-char limit
+
+### Scenario 11.6 — Non-existent / file repoPath → 400 ✅
+
+**Given**: `repoPath` does not exist, or points to a file (not a directory)\
+**When**: `POST /devos/git-commit`\
+**Then**: HTTP 400
+
+**E2E**: `scripts/run_git_commit_e2e.sh` — 9 assertions: confirm=false→400+no-commit, COMMITTED+changedFiles, count==2, hash-matches-HEAD, no-remote, NO_CHANGES-idempotent, non-git→400, long-msg→400, secret scan PASS.
+
+---
+
 ## Status Summary
 
-> **v0.1.0-rc2 + Stage 10** — All scenarios in scope have been implemented and CI-verified.
-> 130 Java tests + 54 Python tests, 0 failures. Six E2E scripts green. No real secrets in CI.
+> **v0.1.0-rc2 + Stage 11** — All scenarios in scope have been implemented and CI-verified.
+> 139 Java tests + 54 Python tests, 0 failures. Seven E2E scripts green. No real secrets in CI.
 
 | Stage | Name | Status | CI Proof |
 |---|---|---|---|
@@ -610,3 +656,4 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 | 8 | Human Confirm Apply Patch | ✅ Complete | `DevOsApplyPatchTest` (5 tests) + `run_apply_patch_e2e.sh` |
 | 9 | Test Command Runner | ✅ Complete | `DevOsRunTestTest` (9 tests) + `run_test_runner_e2e.sh` |
 | 10 | One-step Fix Loop | ✅ Complete | `DevOsProposeFixTest` (8 tests) + `test_fix_preview.py` (13 tests) + `run_fix_loop_e2e.sh` |
+| 11 | Human Git Commit Snapshot | ✅ Complete | `DevOsGitCommitTest` (10 tests) + `run_git_commit_e2e.sh` |

@@ -9,6 +9,8 @@ import com.asyncaiflow.service.DevOsService;
 import com.asyncaiflow.web.ApiResponse;
 import com.asyncaiflow.web.dto.DevOsApplyPatchRequest;
 import com.asyncaiflow.web.dto.DevOsApplyPatchResponse;
+import com.asyncaiflow.web.dto.DevOsGitCommitRequest;
+import com.asyncaiflow.web.dto.DevOsGitCommitResponse;
 import com.asyncaiflow.web.dto.DevOsInterruptRequest;
 import com.asyncaiflow.web.dto.DevOsInterruptResponse;
 import com.asyncaiflow.web.dto.DevOsProposeFixRequest;
@@ -225,5 +227,47 @@ public class DevOsController {
     public ApiResponse<DevOsProposeFixResponse> proposeFix(@Valid @RequestBody DevOsProposeFixRequest request) {
         DevOsProposeFixResponse response = devOsService.proposeFix(request);
         return ApiResponse.ok("fix proposal queued", response);
+    }
+
+    /**
+     * B-021 — Create a local git commit snapshot in the specified repo.
+     *
+     * <pre>
+     * POST /devos/git-commit
+     * {
+     *   "repoPath":      "/Users/dev/my-repo",
+     *   "slackThreadId": "C1234567890/1234567890.123456",
+     *   "message":       "devos: apply README title fix",
+     *   "confirm":       true
+     * }
+     * </pre>
+     *
+     * 响应：
+     * <pre>
+     * {
+     *   "success": true,
+     *   "data": {
+     *     "status":       "COMMITTED" | "NO_CHANGES",
+     *     "commitHash":   "a1b2c3d...",
+     *     "changedFiles": ["README.md"],
+     *     "message":      "devos: apply README title fix",
+     *     "diffExcerpt":  "...",
+     *     "repoPath":     "/Users/dev/my-repo"
+     *   }
+     * }
+     * </pre>
+     *
+     * 安全不变量：
+     *  - confirm 必须为 true
+     *  - repoPath 必须是 git 仓库
+     *  - message 长度 ≤ 200 字符
+     *  - 只创建本地 commit，不 push，不修改 remote
+     *  - 不写全局 git config
+     *  - 无改动时返回 NO_CHANGES，HTTP 200
+     */
+    @PostMapping("/git-commit")
+    public ApiResponse<DevOsGitCommitResponse> gitCommit(@Valid @RequestBody DevOsGitCommitRequest request) {
+        DevOsGitCommitResponse response = devOsService.gitCommit(request);
+        return ApiResponse.ok("git commit executed", response);
     }
 }
