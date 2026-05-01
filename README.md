@@ -578,6 +578,62 @@ DEVOS_BRIDGE_DRY_RUN=false ASYNCAIFLOW_URL=http://localhost:8080 \
 
 ---
 
+## Slack Command Intent Router (B-022)
+
+Stage 13 extends `slack_bridge.py` with a regex-based intent router so users can express specific commands directly in Slack.
+
+**Command syntax:**
+
+| Command | Slack message | Backend endpoint |
+|---|---|---|
+| Ask (default) | `devos: <any text>` | `POST /devos/start` |
+| Explicit ask | `devos: ask <text>` | `POST /devos/start` |
+| Preview patch | `devos: preview <file> replace "<from>" with "<to>"` | `POST /devos/start` (mode=patch_preview) |
+| Apply patch | `devos: apply <actionId> confirm` | `POST /devos/apply-patch` |
+| Run tests | `devos: test <command>` | `POST /devos/run-test` |
+| Propose fix | `devos: fix <filePath>` | _(returns NEEDS_CONTEXT in v1)_ |
+| Git commit | `devos: commit "<message>" confirm` | `POST /devos/git-commit` |
+
+**Examples (dry-run):**
+```bash
+# Preview a patch
+DEVOS_DEFAULT_REPO_PATH=/my/repo \
+  DEVOS_MOCK_TEXT='devos: preview README.md replace "Old Title" with "New Title"' \
+  bash scripts/run_slack_bridge_mock.sh
+
+# Commit with confirmation (required)
+DEVOS_DEFAULT_REPO_PATH=/my/repo \
+  DEVOS_MOCK_TEXT='devos: commit "fix typo" confirm' \
+  bash scripts/run_slack_bridge_mock.sh
+
+# Apply a patch (dangerous — requires "confirm")
+DEVOS_MOCK_TEXT='devos: apply 42 confirm' bash scripts/run_slack_bridge_mock.sh
+```
+
+**Safety invariants:**
+
+| Guard | Behaviour |
+|---|---|
+| `apply`/`commit` without `confirm` | → `INTENT_NEEDS_CONFIRMATION`; no backend call |
+| `preview`/`test`/`commit` without `DEVOS_DEFAULT_REPO_PATH` | → `INTENT_CONFIG_ERROR`; no backend call |
+| `fix` (v1) | → `INTENT_NEEDS_CONTEXT`; no backend call |
+| `dangerous=True` | Set for `apply` and `commit` intents; printed by mock script |
+| Dry-run | `DEVOS_BRIDGE_DRY_RUN=true` returns intent+payload, never calls backend |
+| Backward compat | `devos: <plain text>` still routes to `/devos/start` as `ask` intent |
+| No auto-apply/commit | Bridge never initiates destructive ops without user `confirm` |
+
+**Key environment variables** (`.env.example`):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DEVOS_DEFAULT_REPO_PATH` | _(empty)_ | **Required** for preview/test/commit intents |
+| `DEVOS_DEFAULT_FILE_PATH` | _(empty)_ | Optional; reserved for future fix intent auto-detection |
+| `DEVOS_BRIDGE_DRY_RUN` | `true` | Return intent+payload without calling backend |
+
+**Unit tests:** `python-workers/devos_chat_worker/test_slack_bridge.py` — 26 new intent-router scenarios (A–T) + all 34 legacy tests preserved = **60 total, 0 failures**.
+
+---
+
 ## API Reference
 
 ### POST /devos/start

@@ -639,7 +639,7 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 
 **Goal**: 最小 Slack → DevOS 桥接：`devos: <instruction>` 消息 → `POST /devos/start` → Slack 回帖。本地 dry-run 可运行，不需要 Slack Events API、OAuth、Socket Mode 或公网 tunnel。
 
-**Validation**: ✅ `test_slack_bridge.py` 10 tests (A–J). `scripts/run_slack_bridge_mock.sh` dry-run verified. 139 Java + 64+ Python tests, 0 failures.
+**Validation**: ✅ `test_slack_bridge.py` 10 tests (A–J). `scripts/run_slack_bridge_mock.sh` dry-run verified. 139 Java + 88 Python tests, 0 failures.
 
 ### Scenario 12.1 — Non-devos message ignored ✅
 
@@ -686,10 +686,45 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 
 ---
 
+## Stage 13: Slack Command Intent Router (B-022) ✅
+
+**Goal**: Extend `slack_bridge.py` with an intent parsing layer so Slack messages can express six distinct commands routed to the appropriate backend endpoint.
+
+| Scenario | Input (after "devos:") | Intent kind | Endpoint | Dangerous |
+|---|---|---|---|---|
+| Default ask | `<any text>` | `ask` | `/devos/start` | No |
+| Explicit ask | `ask <text>` | `ask` | `/devos/start` | No |
+| Preview patch | `preview <file> replace "<from>" with "<to>"` | `preview` | `/devos/start` (mode=patch_preview) | No |
+| Apply patch | `apply <actionId> confirm` | `apply` | `/devos/apply-patch` | **Yes** |
+| Run test | `test <command>` | `test` | `/devos/run-test` | No |
+| Propose fix | `fix <filePath>` | `needs_context` | — (v1 stub) | No |
+| Git commit | `commit "<message>" confirm` | `commit` | `/devos/git-commit` | **Yes** |
+
+**Safety guards**:
+- `apply`/`commit` without the word `confirm` → `NEEDS_CONFIRMATION`, no backend call
+- `preview`/`test`/`commit` without `DEVOS_DEFAULT_REPO_PATH` → `CONFIG_ERROR`, no backend call
+- `fix` always returns `NEEDS_CONTEXT` in v1 (no backend call)
+- `dangerous=True` for apply and commit intents
+- `DEVOS_BRIDGE_DRY_RUN=true` returns intent+payload, no backend call
+- No token printing; `trust_env=False` on all sessions
+
+**New components**:
+- `DevosIntent` dataclass (kind/endpoint/payload/dangerous/needs_confirmation/reason/instruction)
+- `parse_devos_intent()` — regex router for 6 command grammars
+- `call_devos_endpoint()` — generalised HTTP POST helper
+- `_build_reply_from_intent()` — per-kind Slack reply builder
+- `handle_slack_event()` refactored to use intent router (backward compatible)
+
+**Tests added**: 26 new scenarios (A–T in `TestParseDevosIntent` + `TestIntentRouterHandleSlackEvent`); total 60 tests, 0 failures.
+
+**Mock script**: `scripts/run_slack_bridge_mock.sh` updated to print `kind`, `endpoint`, `payload`, `replyText`.
+
+---
+
 ## Status Summary
 
-> **v0.1.0-rc2 + Stage 12** — All scenarios in scope have been implemented and CI-verified.
-> 139 Java tests + 64+ Python tests, 0 failures. Seven E2E scripts green + `run_slack_bridge_mock.sh`. No real secrets in CI.
+> **v0.1.0-rc2 + Stage 13** — All scenarios in scope have been implemented and CI-verified.
+> 139 Java tests + 88 Python tests, 0 failures. Seven E2E scripts green + `run_slack_bridge_mock.sh`. No real secrets in CI.
 
 | Stage | Name | Status | CI Proof |
 |---|---|---|---|
@@ -709,3 +744,4 @@ This document maps the OS kernel concepts implemented in **Slack Dev OS** to the
 | 10 | One-step Fix Loop | ✅ Complete | `DevOsProposeFixTest` (8 tests) + `test_fix_preview.py` (13 tests) + `run_fix_loop_e2e.sh` |
 | 11 | Human Git Commit Snapshot | ✅ Complete | `DevOsGitCommitTest` (10 tests) + `run_git_commit_e2e.sh` |
 | 12 | Slack Minimal Loop Bridge | ✅ Complete | `test_slack_bridge.py` (10 tests) + `run_slack_bridge_mock.sh` |
+| 13 | Slack Command Intent Router | ✅ Complete | `test_slack_bridge.py` (60 tests) + `run_slack_bridge_mock.sh` |

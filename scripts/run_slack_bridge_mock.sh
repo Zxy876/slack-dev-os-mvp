@@ -1,25 +1,33 @@
 #!/usr/bin/env bash
-# run_slack_bridge_mock.sh — B-021.5 Slack Minimal Loop Bridge Mock Runner
+# run_slack_bridge_mock.sh — B-021.5 / B-022 Slack Bridge Mock Runner
 #
 # 使用模拟 Slack event 测试 slack_bridge.py 的 handle_slack_event，
 # 不需要真实 Slack token 或后端连接。
 #
 # 用法：
-#   # dry-run（默认）：只打印 payload，不调用后端
+#   # dry-run（默认）：只打印 intent + payload，不调用后端
 #   bash scripts/run_slack_bridge_mock.sh
 #
 #   # 真实调用（需要后端运行在 ASYNCAIFLOW_URL）
 #   DEVOS_BRIDGE_DRY_RUN=false bash scripts/run_slack_bridge_mock.sh
 #
-#   # 自定义指令
-#   DEVOS_MOCK_TEXT="devos: run all tests" bash scripts/run_slack_bridge_mock.sh
+#   # 自定义指令（B-022 intent examples）
+#   DEVOS_MOCK_TEXT='devos: preview README.md replace "Old" with "New"' \
+#     bash scripts/run_slack_bridge_mock.sh
+#
+#   DEVOS_MOCK_TEXT='devos: commit "feat: add B-022" confirm' \
+#     bash scripts/run_slack_bridge_mock.sh
+#
+#   DEVOS_MOCK_TEXT='devos: test mvn verify -q' \
+#     bash scripts/run_slack_bridge_mock.sh
 #
 # 环境变量：
-#   ASYNCAIFLOW_URL       default: http://localhost:8080
-#   DEVOS_BRIDGE_DRY_RUN  default: true
-#   DEVOS_MOCK_TEXT       模拟消息文本，default: "devos: summarize this repo"
-#   DEVOS_MOCK_CHANNEL    模拟频道 ID，default: C-MOCK-BRIDGE
-#   DEVOS_MOCK_TS         模拟时间戳，default: 1710000000.000100
+#   ASYNCAIFLOW_URL          default: http://localhost:8080
+#   DEVOS_BRIDGE_DRY_RUN     default: true
+#   DEVOS_DEFAULT_REPO_PATH  required for preview/test/commit intents
+#   DEVOS_MOCK_TEXT          模拟消息文本，default: "devos: summarize this repo"
+#   DEVOS_MOCK_CHANNEL       模拟频道 ID，default: C-MOCK-BRIDGE
+#   DEVOS_MOCK_TS            模拟时间戳，default: 1710000000.000100
 #
 # 注意：此脚本不打印 SLACK_BOT_TOKEN。
 
@@ -35,7 +43,7 @@ DEVOS_MOCK_CHANNEL="${DEVOS_MOCK_CHANNEL:-C-MOCK-BRIDGE}"
 DEVOS_MOCK_TS="${DEVOS_MOCK_TS:-1710000000.000100}"
 
 echo "================================================="
-echo " Slack Dev OS — Bridge Mock Runner (B-021.5)"
+echo " Slack Dev OS — Bridge Mock Runner (B-022)"
 echo "================================================="
 echo ""
 echo "  DRY_RUN:    ${DEVOS_BRIDGE_DRY_RUN}"
@@ -81,11 +89,12 @@ logging.basicConfig(
 
 from slack_bridge import handle_slack_event  # noqa: E402
 
+# Read mock values from env to avoid shell quoting issues with embedded quotes
 mock_event = {
     "type": "message",
-    "channel": "${DEVOS_MOCK_CHANNEL}",
-    "ts": "${DEVOS_MOCK_TS}",
-    "text": "${DEVOS_MOCK_TEXT}",
+    "channel": os.environ.get("DEVOS_MOCK_CHANNEL", "C-MOCK-BRIDGE"),
+    "ts": os.environ.get("DEVOS_MOCK_TS", "1710000000.000100"),
+    "text": os.environ.get("DEVOS_MOCK_TEXT", "devos: summarize this repo"),
 }
 
 print("── Mock Slack Event ──────────────────────────────")
@@ -99,17 +108,27 @@ print(json.dumps(result, indent=2))
 print("")
 
 if result.get("handled"):
+    intent = result.get("intent", {})
+    kind     = intent.get("kind", "unknown")
+    endpoint = intent.get("endpoint", "")
+    payload  = intent.get("payload", {})
+
     print(f"[OK]  Bridge handled the event.")
+    print(f"      kind:       {kind}")
+    if endpoint:
+        print(f"      endpoint:   {endpoint}")
+    if payload:
+        print(f"      payload:    {json.dumps(payload)}")
     if result.get("replyText"):
-        print(f"      Slack reply: {result['replyText']}")
+        print(f"      replyText:  {result['replyText']}")
     if result.get("actionId"):
-        print(f"      Action ID:   {result['actionId']}")
+        print(f"      actionId:   {result['actionId']}")
+    if intent.get("dangerous"):
+        print(f"      [DANGEROUS] This intent modifies history/files.")
 else:
     print(f"[INFO] Bridge did not handle the event: {result.get('reason', 'unknown reason')}")
 
 PYEOF
 
 echo ""
-echo "================================================="
-echo " Done."
 echo "================================================="

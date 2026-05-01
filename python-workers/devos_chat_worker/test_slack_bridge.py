@@ -276,35 +276,29 @@ class TestDryRun:
 class TestLiveBackendCall:
 
     def test_g_backend_called_with_correct_payload(self):
-        """call_devos_start receives correct text and slackThreadId."""
+        """call_devos_endpoint receives correct text and slackThreadId."""
         event = _make_message_event(
-            "devos: fix the linting errors",
+            "devos: improve the linting setup",
             channel="C555",
             ts="1710000001.000001",
         )
 
+        captured_endpoint = {}
         captured_payload = {}
 
-        def fake_call_devos_start(payload, base_url=None):
+        def fake_call_devos_endpoint(endpoint, payload, base_url=None):
+            captured_endpoint["endpoint"] = endpoint
             captured_payload.update(payload)
             return {"success": True, "actionId": 99, "workflowId": 3}
 
-        result = slack_bridge.handle_slack_event(
-            event,
-            config={
-                "dry_run": False,
-                "base_url": "http://fake-backend:8080",
-            },
-        )
-
-        # We need to patch call_devos_start at module level
-        with patch("slack_bridge.call_devos_start", side_effect=fake_call_devos_start):
+        with patch("slack_bridge.call_devos_endpoint", side_effect=fake_call_devos_endpoint):
             result = slack_bridge.handle_slack_event(
                 event,
                 config={"dry_run": False, "base_url": "http://fake-backend:8080"},
             )
 
-        assert captured_payload.get("text") == "fix the linting errors"
+        assert captured_endpoint.get("endpoint") == "/devos/start"
+        assert captured_payload.get("text") == "improve the linting setup"
         assert "slackThreadId" in captured_payload
         assert captured_payload["slackThreadId"] == "C555/1710000001.000001"
 
@@ -312,7 +306,7 @@ class TestLiveBackendCall:
         """Successful backend call returns actionId in result."""
         event = _make_message_event("devos: do something")
 
-        with patch("slack_bridge.call_devos_start") as mock_call:
+        with patch("slack_bridge.call_devos_endpoint") as mock_call:
             mock_call.return_value = {"success": True, "actionId": 77}
             result = slack_bridge.handle_slack_event(
                 event,
@@ -328,7 +322,7 @@ class TestLiveBackendCall:
         """Reply text matches expected format."""
         event = _make_message_event("devos: summarize repo")
 
-        with patch("slack_bridge.call_devos_start") as mock_call:
+        with patch("slack_bridge.call_devos_endpoint") as mock_call:
             mock_call.return_value = {"success": True, "actionId": 123}
             result = slack_bridge.handle_slack_event(
                 event,
@@ -348,8 +342,8 @@ class TestBackendError:
         """Backend failure still sets handled=True."""
         event = _make_message_event("devos: do something")
 
-        with patch("slack_bridge.call_devos_start") as mock_call:
-            mock_call.side_effect = RuntimeError("devos/start HTTP 500: internal server error")
+        with patch("slack_bridge.call_devos_endpoint") as mock_call:
+            mock_call.side_effect = RuntimeError("/devos/start HTTP 500: internal server error")
             result = slack_bridge.handle_slack_event(
                 event,
                 config={"dry_run": False},
@@ -362,31 +356,31 @@ class TestBackendError:
         """Error reply mentions the failure without token."""
         event = _make_message_event("devos: run tests")
 
-        with patch("slack_bridge.call_devos_start") as mock_call:
-            mock_call.side_effect = RuntimeError("devos/start HTTP 400: bad request")
+        with patch("slack_bridge.call_devos_endpoint") as mock_call:
+            mock_call.side_effect = RuntimeError("/devos/start HTTP 400: bad request")
             result = slack_bridge.handle_slack_event(
                 event,
                 config={"dry_run": False},
             )
 
-        assert "DevOS failed to start" in result["replyText"]
+        assert "DevOS ask failed" in result["replyText"]
         # Token must never appear in reply
         assert "xoxb-" not in result["replyText"]
         assert "xoxp-" not in result["replyText"]
 
     def test_h_connection_error_handled_gracefully(self):
         """Connection error is handled, not propagated."""
-        event = _make_message_event("devos: test connection")
+        event = _make_message_event("devos: check backend connection")
 
-        with patch("slack_bridge.call_devos_start") as mock_call:
-            mock_call.side_effect = RuntimeError("devos/start connection error: connection refused")
+        with patch("slack_bridge.call_devos_endpoint") as mock_call:
+            mock_call.side_effect = RuntimeError("/devos/start connection error: connection refused")
             result = slack_bridge.handle_slack_event(
                 event,
                 config={"dry_run": False},
             )
 
         assert result["handled"] is True
-        assert "DevOS failed to start" in result["replyText"]
+        assert "DevOS ask failed" in result["replyText"]
 
 
 # ─────────────────────────────────────────────────────────────
@@ -401,11 +395,11 @@ class TestDefaultRepoPath:
 
         captured_payload = {}
 
-        def fake_call(payload, base_url=None):
+        def fake_call(endpoint, payload, base_url=None):
             captured_payload.update(payload)
             return {"success": True, "actionId": 1}
 
-        with patch("slack_bridge.call_devos_start", side_effect=fake_call):
+        with patch("slack_bridge.call_devos_endpoint", side_effect=fake_call):
             slack_bridge.handle_slack_event(
                 event,
                 config={
@@ -422,11 +416,11 @@ class TestDefaultRepoPath:
 
         captured_payload = {}
 
-        def fake_call(payload, base_url=None):
+        def fake_call(endpoint, payload, base_url=None):
             captured_payload.update(payload)
             return {"success": True, "actionId": 2}
 
-        with patch("slack_bridge.call_devos_start", side_effect=fake_call):
+        with patch("slack_bridge.call_devos_endpoint", side_effect=fake_call):
             slack_bridge.handle_slack_event(
                 event,
                 config={
@@ -508,3 +502,380 @@ class TestSlackThreadIdInResult:
         event = {"type": "reaction_added", "channel": "C1234"}
         result = slack_bridge.handle_slack_event(event)
         assert result["handled"] is False
+
+
+# ─────────────────────────────────────────────────────────────
+# B-022 Intent Router Tests (Scenarios A–T)
+# ─────────────────────────────────────────────────────────────
+
+CHANNEL = "C99999"
+TS = "1700000001.000001"
+THREAD_TS = "1700000000.000001"
+THREAD_ID = f"{CHANNEL}/{THREAD_TS}"
+REPO_PATH = "/srv/repo"
+
+
+def _make_ev(text: str, thread_ts: str = None) -> dict:
+    """Minimal message event helper for intent-router tests."""
+    return _make_message_event(
+        text=text,
+        channel=CHANNEL,
+        ts=TS,
+        thread_ts=thread_ts or THREAD_TS,
+    )
+
+
+class TestParseDevosIntent:
+    """Unit tests for parse_devos_intent()."""
+
+    # A. legacy devos: hello → ask/start (backward compat)
+    def test_a_legacy_ask_default(self):
+        intent = slack_bridge.parse_devos_intent(
+            "hello world", THREAD_ID, repo_path=None
+        )
+        assert intent.kind == slack_bridge.INTENT_ASK
+        assert intent.endpoint == "/devos/start"
+        assert intent.payload["text"] == "hello world"
+        assert not intent.dangerous
+
+    # B. devos: ask hello → ask/start
+    def test_b_explicit_ask_keyword(self):
+        intent = slack_bridge.parse_devos_intent(
+            "ask deploy the service", THREAD_ID, repo_path=None
+        )
+        assert intent.kind == slack_bridge.INTENT_ASK
+        assert intent.endpoint == "/devos/start"
+        assert intent.payload["text"] == "deploy the service"
+
+    # C. preview command parses filePath/from/to correctly
+    def test_c_preview_parses_correctly(self):
+        intent = slack_bridge.parse_devos_intent(
+            'preview src/main/App.java replace "OldClass" with "NewClass"',
+            THREAD_ID,
+            repo_path=REPO_PATH,
+        )
+        assert intent.kind == slack_bridge.INTENT_PREVIEW
+        assert intent.endpoint == "/devos/start"
+        assert intent.payload["filePath"] == "src/main/App.java"
+        assert intent.payload["replaceFrom"] == "OldClass"
+        assert intent.payload["replaceTo"] == "NewClass"
+        assert intent.payload["mode"] == "patch_preview"
+        assert intent.payload["writeIntent"] is True
+        assert not intent.dangerous
+
+    # D. preview missing repoPath returns CONFIG_ERROR
+    def test_d_preview_missing_repo(self):
+        intent = slack_bridge.parse_devos_intent(
+            'preview README.md replace "a" with "b"',
+            THREAD_ID,
+            repo_path=None,
+        )
+        assert intent.kind == slack_bridge.INTENT_CONFIG_ERROR
+        assert intent.endpoint == ""
+
+    # F. apply without confirm returns NEEDS_CONFIRMATION
+    def test_f_apply_without_confirm(self):
+        intent = slack_bridge.parse_devos_intent(
+            "apply 101",
+            THREAD_ID,
+            repo_path=REPO_PATH,
+        )
+        assert intent.kind == slack_bridge.INTENT_NEEDS_CONFIRMATION
+        assert intent.needs_confirmation is True
+        assert intent.dangerous is True
+
+    # G. apply with confirm payload has correct previewActionId
+    def test_g_apply_with_confirm_payload(self):
+        intent = slack_bridge.parse_devos_intent(
+            "apply 101 confirm",
+            THREAD_ID,
+            repo_path=REPO_PATH,
+        )
+        assert intent.kind == slack_bridge.INTENT_APPLY
+        assert intent.endpoint == "/devos/apply-patch"
+        assert intent.payload["previewActionId"] == 101
+        assert intent.payload["confirm"] is True
+        assert intent.dangerous is True
+
+    # H. test command calls /devos/run-test with correct command
+    def test_h_test_command_payload(self):
+        intent = slack_bridge.parse_devos_intent(
+            "test mvn verify -q",
+            THREAD_ID,
+            repo_path=REPO_PATH,
+        )
+        assert intent.kind == slack_bridge.INTENT_TEST
+        assert intent.endpoint == "/devos/run-test"
+        assert intent.payload["command"] == "mvn verify -q"
+        assert intent.payload["repoPath"] == REPO_PATH
+
+    # I. test missing repoPath returns CONFIG_ERROR
+    def test_i_test_missing_repo(self):
+        intent = slack_bridge.parse_devos_intent(
+            "test pytest",
+            THREAD_ID,
+            repo_path=None,
+        )
+        assert intent.kind == slack_bridge.INTENT_CONFIG_ERROR
+
+    # J. commit without confirm returns NEEDS_CONFIRMATION
+    def test_j_commit_without_confirm(self):
+        intent = slack_bridge.parse_devos_intent(
+            'commit "add feature"',
+            THREAD_ID,
+            repo_path=REPO_PATH,
+        )
+        assert intent.kind == slack_bridge.INTENT_NEEDS_CONFIRMATION
+        assert intent.dangerous is True
+
+    # K. commit with confirm payload
+    def test_k_commit_with_confirm_payload(self):
+        intent = slack_bridge.parse_devos_intent(
+            'commit "feat: add login" confirm',
+            THREAD_ID,
+            repo_path=REPO_PATH,
+        )
+        assert intent.kind == slack_bridge.INTENT_COMMIT
+        assert intent.endpoint == "/devos/git-commit"
+        assert intent.payload["message"] == "feat: add login"
+        assert intent.payload["confirm"] is True
+        assert intent.dangerous is True
+
+    # L. commit missing repoPath returns CONFIG_ERROR
+    def test_l_commit_missing_repo(self):
+        intent = slack_bridge.parse_devos_intent(
+            'commit "fix: typo" confirm',
+            THREAD_ID,
+            repo_path=None,
+        )
+        assert intent.kind == slack_bridge.INTENT_CONFIG_ERROR
+
+    # M. fix command returns NEEDS_CONTEXT
+    def test_m_fix_returns_needs_context(self):
+        intent = slack_bridge.parse_devos_intent(
+            "fix src/Worker.java",
+            THREAD_ID,
+            repo_path=REPO_PATH,
+        )
+        assert intent.kind == slack_bridge.INTENT_NEEDS_CONTEXT
+        assert intent.endpoint == ""
+        assert not intent.dangerous
+
+    # N. unknown sub-command falls back to ask
+    def test_n_unknown_subcommand_falls_back_to_ask(self):
+        intent = slack_bridge.parse_devos_intent(
+            "summarize all the changes",
+            THREAD_ID,
+            repo_path=None,
+        )
+        assert intent.kind == slack_bridge.INTENT_ASK
+
+    # S. apply/commit intents have dangerous=True
+    def test_s_dangerous_flags(self):
+        apply_intent = slack_bridge.parse_devos_intent(
+            "apply 55 confirm", THREAD_ID, repo_path=REPO_PATH
+        )
+        commit_intent = slack_bridge.parse_devos_intent(
+            'commit "msg" confirm', THREAD_ID, repo_path=REPO_PATH
+        )
+        assert apply_intent.dangerous is True
+        assert commit_intent.dangerous is True
+        # ask/preview/test should NOT be dangerous
+        ask_intent = slack_bridge.parse_devos_intent(
+            "hello", THREAD_ID, repo_path=REPO_PATH
+        )
+        assert ask_intent.dangerous is False
+
+
+class TestIntentRouterHandleSlackEvent:
+    """Integration tests for handle_slack_event with B-022 intent routing."""
+
+    # O. bot message ignored (existing behavior preserved)
+    def test_o_bot_message_ignored(self):
+        event = _make_ev("devos: apply 1 confirm")
+        event["bot_id"] = "B123"
+        result = slack_bridge.handle_slack_event(event)
+        assert result["handled"] is False
+
+    # P. thread_ts mapping still works
+    def test_p_thread_ts_preserved(self):
+        event = _make_ev("devos: hello", thread_ts="1600000000.000001")
+        result = slack_bridge.handle_slack_event(
+            event, config={"dry_run": True}
+        )
+        assert result["slackThreadId"] == f"{CHANNEL}/1600000000.000001"
+
+    # E. preview dry-run does not call backend
+    def test_e_preview_dry_run_no_backend(self):
+        event = _make_ev('devos: preview README.md replace "Old" with "New"')
+        with patch("slack_bridge.call_devos_endpoint") as mock_call:
+            result = slack_bridge.handle_slack_event(
+                event,
+                config={"dry_run": True, "default_repo_path": REPO_PATH},
+            )
+        mock_call.assert_not_called()
+        assert result["handled"] is True
+        assert result["intent"]["kind"] == slack_bridge.INTENT_PREVIEW
+
+    # R. dry-run payload includes endpoint and kind
+    def test_r_dry_run_includes_endpoint_and_kind(self):
+        event = _make_ev("devos: ask explain this")
+        result = slack_bridge.handle_slack_event(
+            event,
+            config={"dry_run": True, "default_repo_path": REPO_PATH},
+        )
+        assert result["intent"]["kind"] == slack_bridge.INTENT_ASK
+        assert result["intent"]["endpoint"] == "/devos/start"
+        assert result["reason"] == "dry-run mode"
+
+    # G full. apply with confirm calls /devos/apply-patch
+    def test_g_apply_calls_apply_patch(self):
+        event = _make_ev("devos: apply 77 confirm")
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.return_value = None
+        mock_resp.json.return_value = {
+            "data": {"actionId": 77, "status": "APPLIED", "applied": True}
+        }
+        with patch("slack_bridge.requests.Session") as mock_sess_cls:
+            mock_sess = MagicMock()
+            mock_sess_cls.return_value = mock_sess
+            mock_sess.post.return_value = mock_resp
+            result = slack_bridge.handle_slack_event(
+                event,
+                config={"dry_run": False, "default_repo_path": REPO_PATH},
+            )
+        posted_url = mock_sess.post.call_args[0][0]
+        assert "/devos/apply-patch" in posted_url
+        posted_json = mock_sess.post.call_args[1]["json"]
+        assert posted_json["previewActionId"] == 77
+        assert posted_json["confirm"] is True
+        assert "APPLIED" in result["replyText"]
+
+    # H full. test command calls /devos/run-test
+    def test_h_test_calls_run_test(self):
+        event = _make_ev("devos: test mvn test -q")
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.return_value = None
+        mock_resp.json.return_value = {
+            "data": {"actionId": 99, "status": "PASSED", "exitCode": 0}
+        }
+        with patch("slack_bridge.requests.Session") as mock_sess_cls:
+            mock_sess = MagicMock()
+            mock_sess_cls.return_value = mock_sess
+            mock_sess.post.return_value = mock_resp
+            result = slack_bridge.handle_slack_event(
+                event,
+                config={"dry_run": False, "default_repo_path": REPO_PATH},
+            )
+        posted_url = mock_sess.post.call_args[0][0]
+        assert "/devos/run-test" in posted_url
+        assert "PASSED" in result["replyText"]
+
+    # Q. backend error safe reply for non-start endpoint
+    def test_q_backend_error_safe_reply(self):
+        event = _make_ev("devos: apply 200 confirm")
+        import requests as req_lib
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_resp.json.return_value = {"message": "internal error"}
+        http_err = req_lib.HTTPError(response=mock_resp)
+        with patch("slack_bridge.requests.Session") as mock_sess_cls:
+            mock_sess = MagicMock()
+            mock_sess_cls.return_value = mock_sess
+            mock_sess.post.side_effect = http_err
+            result = slack_bridge.handle_slack_event(
+                event,
+                config={"dry_run": False, "default_repo_path": REPO_PATH},
+            )
+        assert result["handled"] is True
+        assert "failed" in result["replyText"].lower() or "error" in result["replyText"].lower()
+
+    # T. no secret/token appears in any reply text (not injected by bridge logic)
+    def test_t_no_secret_in_reply(self):
+        """Bridge must not inject or construct token strings in reply output.
+
+        We verify that when a normal ask command is processed, the reply
+        only contains expected content (action ID, status), never a token.
+        The bridge never generates token strings itself — only echoes user text.
+        """
+        import re as _re
+        token_pattern = _re.compile(r"xox[bpoas]-[A-Za-z0-9\-]+")
+
+        # Normal ask — no token in input; verify none in output
+        event = _make_ev("devos: explain the architecture")
+        with patch("slack_bridge.call_devos_endpoint") as mock_call:
+            mock_call.return_value = {"actionId": 42}
+            result = slack_bridge.handle_slack_event(
+                event,
+                config={"dry_run": False, "default_repo_path": REPO_PATH},
+            )
+
+        for key in ("replyText", "reason"):
+            assert not token_pattern.search(result.get(key, "")), (
+                f"Reply field {key!r} unexpectedly contains a token-like string"
+            )
+
+    # needs_confirmation → no backend call (apply without confirm)
+    def test_needs_confirmation_no_backend_call(self):
+        event = _make_ev("devos: apply 55")
+        with patch("slack_bridge.call_devos_endpoint") as mock_call:
+            result = slack_bridge.handle_slack_event(
+                event,
+                config={"dry_run": False, "default_repo_path": REPO_PATH},
+            )
+        mock_call.assert_not_called()
+        assert result["handled"] is True
+        assert "confirm" in result["replyText"].lower()
+        assert result["intent"]["needs_confirmation"] is True
+
+    # needs_context → no backend call (fix command)
+    def test_needs_context_no_backend_call(self):
+        event = _make_ev("devos: fix src/App.py")
+        with patch("slack_bridge.call_devos_endpoint") as mock_call:
+            result = slack_bridge.handle_slack_event(
+                event,
+                config={"dry_run": False, "default_repo_path": REPO_PATH},
+            )
+        mock_call.assert_not_called()
+        assert result["handled"] is True
+        assert result["intent"]["kind"] == slack_bridge.INTENT_NEEDS_CONTEXT
+
+    # config_error → no backend call
+    def test_config_error_no_backend_call(self):
+        event = _make_ev('devos: preview README.md replace "a" with "b"')
+        with patch("slack_bridge.call_devos_endpoint") as mock_call:
+            result = slack_bridge.handle_slack_event(
+                event,
+                config={"dry_run": False, "default_repo_path": None},
+            )
+        mock_call.assert_not_called()
+        assert result["handled"] is True
+        assert result["intent"]["kind"] == slack_bridge.INTENT_CONFIG_ERROR
+
+    # K full. commit with confirm calls /devos/git-commit
+    def test_k_commit_calls_git_commit(self):
+        event = _make_ev('devos: commit "feat: bridge intent router" confirm')
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.return_value = None
+        mock_resp.json.return_value = {
+            "data": {
+                "actionId": 111,
+                "status": "COMMITTED",
+                "commitHash": "abc12345def67890",
+            }
+        }
+        with patch("slack_bridge.requests.Session") as mock_sess_cls:
+            mock_sess = MagicMock()
+            mock_sess_cls.return_value = mock_sess
+            mock_sess.post.return_value = mock_resp
+            result = slack_bridge.handle_slack_event(
+                event,
+                config={"dry_run": False, "default_repo_path": REPO_PATH},
+            )
+        posted_url = mock_sess.post.call_args[0][0]
+        assert "/devos/git-commit" in posted_url
+        posted_json = mock_sess.post.call_args[1]["json"]
+        assert posted_json["message"] == "feat: bridge intent router"
+        assert posted_json["confirm"] is True
+        assert "COMMITTED" in result["replyText"]
+
