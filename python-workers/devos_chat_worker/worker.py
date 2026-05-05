@@ -39,10 +39,19 @@ import os
 import shutil
 import tempfile
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Optional
 
 import requests
+
+# B-xxx Capability Adapter — OpenHands integration (optional, graceful fallback)
+try:
+    from devos_chat_worker.openhands_adapter import AdapterResult, get_openhands_adapter, reset_adapter  # noqa: F401
+    _OPENHANDS_ADAPTER_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _OPENHANDS_ADAPTER_AVAILABLE = False
+    get_openhands_adapter = lambda: None  # type: ignore[assignment]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -60,6 +69,12 @@ CAPABILITIES: list[str] = ["devos_chat"]
 POLL_INTERVAL_S: float = float(os.environ.get("POLL_INTERVAL_S", "2"))
 HEARTBEAT_INTERVAL_S: float = float(os.environ.get("HEARTBEAT_INTERVAL_S", "10"))
 DEMO_MODE: bool = os.environ.get("DEMO_MODE", "").lower() in ("1", "true", "yes")
+
+# ── Agent 身份（多 agent 协作层）──────────────────────────────
+AGENT_NAME: str = os.environ.get("AGENT_NAME", "agent-alpha")
+AGENT_ROLE: str = os.environ.get("AGENT_ROLE", "general")
+AGENT_CHANNEL: str = os.environ.get("SLACK_CHANNEL_ID", "")
+AGENT_MODE: str = os.environ.get("AGENT_MODE", "coordinator" if AGENT_NAME == "agent-alpha" else "executor")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -85,23 +100,26 @@ def select_llm_backend() -> str:
     确定当前应使用的 LLM 后端。
 
     优先级（从高到低）：
-      1. DEMO_MODE=true              → "demo"  （始终优先，无需真实 key）
-      2. GLM_API_KEY 存在            → "glm"
-      3. OPENAI_API_KEY 存在         → "openai"
-      4. 无任何 key                  → RuntimeError（fail fast）
+      1. DEMO_MODE=true              → "demo"  （始终优先，无需真实 key，保证 CI 可控）
+      2. OPENHANDS_URL 已配置        → "openhands"  （Capability Adapter，真实 agent 能力）
+      3. GLM_API_KEY 存在            → "glm"
+      4. OPENAI_API_KEY 存在         → "openai"
+      5. 无任何配置                  → RuntimeError（fail fast）
 
-    返回: "demo" | "glm" | "openai"
-    抛出: RuntimeError — DEMO_MODE=false 且无任何 LLM key
+    返回: "demo" | "openhands" | "glm" | "openai"
+    抛出: RuntimeError — DEMO_MODE=false 且无任何 LLM/OpenHands 配置
     """
     if is_demo_mode():
         return "demo"
+    if os.environ.get("OPENHANDS_URL", "").strip():
+        return "openhands"
     if os.environ.get("GLM_API_KEY"):
         return "glm"
     if os.environ.get("OPENAI_API_KEY"):
         return "openai"
     raise RuntimeError(
-        "No LLM backend available: DEMO_MODE is not set and neither "
-        "GLM_API_KEY nor OPENAI_API_KEY is configured. "
+        "No LLM backend available: DEMO_MODE is not set and none of "
+        "OPENHANDS_URL, GLM_API_KEY, OPENAI_API_KEY is configured. "
         "Set DEMO_MODE=true for local/CI testing, or provide a real LLM API key."
     )
 
@@ -180,6 +198,16 @@ def register_worker() -> None:
         "capabilities": CAPABILITIES,
     })
     LOGGER.info("Worker %s registered with capabilities %s", WORKER_ID, CAPABILITIES)
+    # ── 多 agent 注册到共享注册表 ──────────────────────────────
+    try:
+        try:
+            from devos_chat_worker.multi_agent_router import register_self
+        except ImportError:
+            from multi_agent_router import register_self  # type: ignore
+        register_self(channel_id=AGENT_CHANNEL)
+        LOGGER.info("[multi-agent] agent=%s role=%s registered", AGENT_NAME, AGENT_ROLE)
+    except Exception as exc:
+        LOGGER.warning("[multi-agent] register_self failed (non-fatal): %s", exc)
 
 
 def heartbeat() -> None:
@@ -187,6 +215,15 @@ def heartbeat() -> None:
         _aiflow_post("/worker/heartbeat", {"workerId": WORKER_ID})
     except Exception as exc:
         LOGGER.warning("Heartbeat failed: %s", exc)
+    # ── 同步更新 multi-agent 心跳 ──────────────────────────────
+    try:
+        try:
+            from devos_chat_worker.multi_agent_router import heartbeat_self
+        except ImportError:
+            from multi_agent_router import heartbeat_self  # type: ignore
+        heartbeat_self()
+    except Exception:
+        pass
 
 
 def poll_action() -> Optional[dict]:
@@ -694,6 +731,29 @@ def call_llm(user_text: str, notepad: Optional[str], payload: Optional[dict] = N
             f"[DEMO] I received your request: \"{user_text[:100]}\"\n"
             f"This is a demo stub response from Slack Dev OS worker.{retry_note}"
         )
+    # ── B-xxx Capability Adapter: OpenHands (优先级高于 native LLM) ──
+    openhands_url = os.environ.get("OPENHANDS_URL", "").strip()
+    if openhands_url:
+        adapter = get_openhands_adapter()
+        if adapter:
+            if adapter.is_available():
+                result = adapter.run_task(user_text)
+                if result.ok and result.response:
+                    LOGGER.info(
+                        "[worker] using openhands.core, conv=%s",
+                        (result.conversation_id or "")[:8],
+                    )
+                    return result.response + result.format_footer()
+                LOGGER.warning(
+                    "[worker] openhands.core returned error: %s — falling back to native LLM",
+                    result.error,
+                )
+            else:
+                LOGGER.warning(
+                    "[worker] OPENHANDS_URL=%s is configured but not reachable "
+                    "— falling back to native LLM",
+                    openhands_url,
+                )
     if os.environ.get("GLM_API_KEY"):
         return _call_glm(user_text, notepad)
     if os.environ.get("OPENAI_API_KEY"):
@@ -701,6 +761,414 @@ def call_llm(user_text: str, notepad: Optional[str], payload: Optional[dict] = N
     raise RuntimeError(
         "No LLM API key configured. Set OPENAI_API_KEY, GLM_API_KEY, or DEMO_MODE=true."
     )
+
+
+def resolve_integration_status(llm_response: str) -> str:
+    """根据回复与环境推导对外可见的集成状态。"""
+    if "capability_source: openhands.core" in llm_response:
+        return "connected"
+    if os.environ.get("OPENHANDS_URL", "").strip():
+        return "degraded"
+    return "disconnected"
+
+
+def append_integration_footer(text: str, integration_status: str) -> str:
+    """确保回复末尾包含 integration_status，避免重复附加。"""
+    if "integration_status:" in text:
+        return text
+    return text + f"\n\n_[integration_status: {integration_status}]_"
+
+
+def coordinator_classify_and_route(user_text: str, payload: Optional[dict] = None) -> tuple[Optional[str], Optional[str]]:
+    """
+    Coordinator 任务分类与自动分配。
+    
+    根据用户需求文本，使用 LLM 分类为具体的 agent 角色，并自动生成 handoff 上下文。
+    
+    返回: (target_role, context) 或 (None, None) 如果不需要分配给其他 agent
+    
+    支持的角色: backend, frontend, test, review, devops
+    """
+    if not user_text.strip():
+        return None, None
+    
+    # 构建分类 prompt
+    classification_prompt = (
+        f"""你是任务分类与路由系统。分析用户需求，决定应该分配给哪个 agent 角色执行。
+
+用户需求: {user_text}
+
+可选的 agent 角色及职责:
+- backend: 后端代码实现、API 设计、数据库迁移
+- frontend: 前端组件、UI 交互、样式实现
+- test: 编写测试、运行测试套件、分析失败用例
+- review: 代码审查、安全扫描、提出改进建议
+- devops: CI/CD 配置、Docker、基础设施即代码
+
+你必须用以下 JSON 格式回复，不包含其他文本:
+{{
+  "should_handoff": true/false,
+  "target_role": "backend|frontend|test|review|devops|null",
+  "reason": "简短的分类理由",
+  "context": "传递给目标 agent 的上下文摘要"
+}}
+
+如果用户需求不属于任何特定角色，或者 coordinator 自己可以处理，应该设置 "should_handoff": false。
+"""
+    )
+    
+    try:
+        # 使用 DEMO_MODE=false 来调用分类 LLM（不用 stub）
+        llm_response = call_llm(classification_prompt, "", payload or {})
+        
+        # 尝试解析 JSON
+        import re
+        json_match = re.search(r'\{[^{}]*"should_handoff"[^{}]*\}', llm_response, re.DOTALL)
+        if not json_match:
+            LOGGER.warning("Coordinator classification LLM response not in JSON format: %s", llm_response[:100])
+            return None, None
+        
+        classification_json = json.loads(json_match.group())
+        
+        if not classification_json.get("should_handoff"):
+            LOGGER.info("[coordinator] classification: should not handoff, self-handle")
+            return None, None
+        
+        target_role = classification_json.get("target_role", "").strip()
+        context = classification_json.get("context", "").strip()
+        reason = classification_json.get("reason", "")
+        
+        if not target_role or target_role == "null":
+            return None, None
+        
+        LOGGER.info(
+            "[coordinator] classified task for handoff: role=%s reason=%s",
+            target_role, reason
+        )
+        
+        return target_role, context
+        
+    except (json.JSONDecodeError, ValueError, KeyError) as exc:
+        LOGGER.warning("Coordinator classification failed: %s", exc)
+        return None, None
+    except Exception as exc:
+        LOGGER.error("Unexpected error in coordinator_classify_and_route: %s", exc)
+        return None, None
+
+
+def collect_real_artifacts(payload: Optional[dict], result: Optional[dict] = None) -> dict:
+    """
+    收集真实的执行产物：Playwright 截图、测试报告、构建产物 URL、页面预览。
+    
+    支持的产物来源:
+    1. Playwright 截图文件路径: payload.get("screenshot_path")
+    2. 构建产物目录: payload.get("build_dir")
+    3. 测试报告文件: payload.get("test_report_file")
+    4. 预览 URL: payload.get("preview_url")
+    5. 执行日志: payload.get("log_file") 或 result.get("notepad")
+    
+    返回收集结果的字典，用于后续上传/展示。
+    """
+    if not isinstance(payload, dict) and not isinstance(result, dict):
+        return {}
+    
+    payload = payload or {}
+    result = result or {}
+    artifacts: dict = {}
+    
+    # 1. Playwright 截图
+    screenshot_path = payload.get("screenshot_path", "")
+    if screenshot_path and isinstance(screenshot_path, str):
+        screenshot_path = screenshot_path.strip()
+        if os.path.isfile(screenshot_path):
+            try:
+                # 在真实部署中，应该上传到 Slack Files API，这里返回本地路径
+                artifacts["screenshots"] = [f"file://{os.path.abspath(screenshot_path)}"]
+                LOGGER.info("[artifacts] collected screenshot: %s", screenshot_path)
+            except Exception as exc:
+                LOGGER.warning("[artifacts] failed to process screenshot: %s", exc)
+    
+    # 2. 构建产物
+    build_dir = payload.get("build_dir", "")
+    if build_dir and isinstance(build_dir, str):
+        build_dir = build_dir.strip()
+        if os.path.isdir(build_dir):
+            try:
+                build_files = []
+                for root, dirs, files in os.walk(build_dir):
+                    for fname in files[:5]:  # 最多 5 个文件
+                        fpath = os.path.join(root, fname)
+                        build_files.append({
+                            "name": fname,
+                            "url": f"file://{os.path.abspath(fpath)}"
+                        })
+                if build_files:
+                    artifacts["buildArtifacts"] = build_files
+                    LOGGER.info("[artifacts] collected %d build artifacts from %s", len(build_files), build_dir)
+            except Exception as exc:
+                LOGGER.warning("[artifacts] failed to collect build artifacts: %s", exc)
+    
+    # 3. 测试报告
+    test_report_file = payload.get("test_report_file", "")
+    if test_report_file and isinstance(test_report_file, str):
+        test_report_file = test_report_file.strip()
+        if os.path.isfile(test_report_file):
+            try:
+                artifacts["testReport"] = f"file://{os.path.abspath(test_report_file)}"
+                LOGGER.info("[artifacts] collected test report: %s", test_report_file)
+            except Exception as exc:
+                LOGGER.warning("[artifacts] failed to collect test report: %s", exc)
+    
+    # 4. 预览 URL
+    preview_url = payload.get("preview_url", "") or payload.get("previewUrl", "")
+    if preview_url and isinstance(preview_url, str):
+        preview_url = preview_url.strip()
+        if preview_url.startswith(("http://", "https://")):
+            artifacts["previewUrl"] = preview_url
+            LOGGER.info("[artifacts] collected preview URL: %s", preview_url[:50])
+    
+    # 5. 日志摘要
+    log_file = payload.get("log_file", "")
+    if log_file and isinstance(log_file, str):
+        log_file = log_file.strip()
+        if os.path.isfile(log_file):
+            try:
+                with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
+                    # 读取最后 500 字符作为摘要
+                    content = f.read()
+                    summary = content[-500:] if len(content) > 500 else content
+                    artifacts["logSummary"] = summary
+                    LOGGER.info("[artifacts] collected log summary from %s", log_file)
+            except Exception as exc:
+                LOGGER.warning("[artifacts] failed to collect logs: %s", exc)
+    elif "notepad" in result and isinstance(result.get("notepad"), str):
+        # fallback: 使用 result notepad 的最后部分作为日志摘要
+        notepad = result.get("notepad", "")
+        artifacts["logSummary"] = notepad[-500:] if len(notepad) > 500 else notepad
+    
+    return artifacts
+
+
+def build_artifact_summary(payload: Optional[dict]) -> tuple[str, dict]:
+    """把测试报告、构建产物、截图、预览链接、日志摘要统一整理为 Slack 可读块。
+    
+    首先尝试收集真实产物（通过 collect_real_artifacts），然后才使用 payload 中提供的产物字段。
+    """
+    if not isinstance(payload, dict):
+        return "", {}
+
+    # 先收集真实产物
+    real_artifacts = collect_real_artifacts(payload)
+    
+    # 然后从 payload 或真实收集结果中提取产物
+    artifact_payload = payload.get("artifacts") if isinstance(payload.get("artifacts"), dict) else {}
+    preview_url = (
+        artifact_payload.get("previewUrl") 
+        or artifact_payload.get("preview_url") 
+        or payload.get("previewUrl") 
+        or payload.get("preview_url")
+        or real_artifacts.get("previewUrl")
+    )
+    screenshots = (
+        artifact_payload.get("screenshots") 
+        or payload.get("screenshots") 
+        or real_artifacts.get("screenshots")
+        or []
+    )
+    build_artifacts = (
+        artifact_payload.get("buildArtifacts") 
+        or artifact_payload.get("build_artifacts") 
+        or payload.get("buildArtifacts") 
+        or payload.get("build_artifacts")
+        or real_artifacts.get("buildArtifacts")
+        or []
+    )
+    test_report = (
+        artifact_payload.get("testReport") 
+        or artifact_payload.get("test_report") 
+        or payload.get("testReport") 
+        or payload.get("test_report")
+        or real_artifacts.get("testReport")
+    )
+    log_summary = (
+        artifact_payload.get("logSummary") 
+        or artifact_payload.get("log_summary") 
+        or payload.get("logSummary") 
+        or payload.get("log_summary")
+        or real_artifacts.get("logSummary")
+    )
+
+    normalized: dict = {}
+    lines: list[str] = []
+
+    if preview_url:
+        normalized["previewUrl"] = str(preview_url)
+        lines.append(f"• Preview: {preview_url}")
+
+    if screenshots:
+        normalized["screenshots"] = [str(item) for item in screenshots[:3]]
+        for screenshot in normalized["screenshots"]:
+            lines.append(f"• Screenshot: {screenshot}")
+
+    if build_artifacts:
+        normalized_items: list[str] = []
+        for item in build_artifacts[:5]:
+            if isinstance(item, dict):
+                label = item.get("name") or item.get("label") or item.get("url") or "artifact"
+                url = item.get("url")
+                normalized_items.append(f"{label}: {url}" if url else str(label))
+            else:
+                normalized_items.append(str(item))
+        normalized["buildArtifacts"] = normalized_items
+        for item in normalized_items:
+            lines.append(f"• Build: {item}")
+
+    if test_report:
+        normalized["testReport"] = str(test_report)
+        lines.append(f"• Test report: {test_report}")
+
+    if log_summary:
+        summary = str(log_summary).strip()
+        normalized["logSummary"] = summary[:500]
+        lines.append(f"• Logs: {normalized['logSummary'][:200]}")
+
+    if not lines:
+        return "", {}
+
+    return "*Artifacts*\n" + "\n".join(lines), normalized
+
+
+def append_artifact_summary(text: str, payload: Optional[dict]) -> tuple[str, dict]:
+    block, artifacts = build_artifact_summary(payload)
+    if not block:
+        return text, {}
+    if "*Artifacts*" in text:
+        return text, artifacts
+    return f"{text}\n\n{block}", artifacts
+
+
+class WorkspaceLockTimeout(RuntimeError):
+    pass
+
+
+def _workspace_lock_root() -> str:
+    return os.environ.get("DEVOS_WORKSPACE_LOCK_ROOT", "/tmp/devos-workspace-locks")
+
+
+def _workspace_lock_timeout_s() -> float:
+    return float(os.environ.get("DEVOS_WORKSPACE_LOCK_TIMEOUT_S", "15"))
+
+
+def _workspace_lock_stale_s() -> float:
+    return float(os.environ.get("DEVOS_WORKSPACE_LOCK_STALE_S", "1800"))
+
+
+def _workspace_key_from_payload(payload: dict) -> str:
+    return (
+        payload.get("workspaceKey")
+        or payload.get("repoPath")
+        or payload.get("repo_path")
+        or ""
+    )
+
+
+def _workspace_lock_dir(workspace_key: str) -> str:
+    digest = hashlib.sha1(workspace_key.encode("utf-8")).hexdigest()
+    return os.path.join(_workspace_lock_root(), digest)
+
+
+def acquire_workspace_lock(workspace_key: str, owner: str, timeout_s: Optional[float] = None) -> dict:
+    if not workspace_key:
+        return {}
+
+    timeout = _workspace_lock_timeout_s() if timeout_s is None else timeout_s
+    stale_s = _workspace_lock_stale_s()
+    lock_dir = _workspace_lock_dir(workspace_key)
+    metadata_path = os.path.join(lock_dir, "owner.json")
+    os.makedirs(_workspace_lock_root(), exist_ok=True)
+    deadline = time.monotonic() + timeout
+
+    while True:
+        try:
+            os.mkdir(lock_dir)
+            metadata = {
+                "workspaceKey": workspace_key,
+                "owner": owner,
+                "agent": AGENT_NAME,
+                "mode": AGENT_MODE,
+                "pid": os.getpid(),
+                "acquiredAt": time.time(),
+            }
+            with open(metadata_path, "w", encoding="utf-8") as fh:
+                json.dump(metadata, fh)
+            return {"lockDir": lock_dir, "metadata": metadata}
+        except FileExistsError:
+            try:
+                with open(metadata_path, "r", encoding="utf-8") as fh:
+                    active = json.load(fh)
+            except Exception:
+                active = {}
+
+            acquired_at = float(active.get("acquiredAt", 0) or 0)
+            if acquired_at and (time.time() - acquired_at) > stale_s:
+                LOGGER.warning("Removing stale workspace lock: %s", lock_dir)
+                shutil.rmtree(lock_dir, ignore_errors=True)
+                continue
+
+            if time.monotonic() >= deadline:
+                active_owner = active.get("owner", "unknown")
+                raise WorkspaceLockTimeout(
+                    f"workspace busy: {workspace_key} (held by {active_owner})"
+                )
+            time.sleep(0.1)
+
+
+def release_workspace_lock(lock_info: dict) -> None:
+    lock_dir = lock_info.get("lockDir") if isinstance(lock_info, dict) else None
+    if lock_dir:
+        shutil.rmtree(lock_dir, ignore_errors=True)
+
+
+@contextmanager
+def workspace_lock(payload: dict, action_id: int):
+    workspace_key = _workspace_key_from_payload(payload)
+    if not workspace_key:
+        yield {}, workspace_key
+        return
+
+    owner = f"action:{action_id}"
+    lock_info = acquire_workspace_lock(workspace_key, owner)
+    try:
+        yield lock_info, workspace_key
+    finally:
+        release_workspace_lock(lock_info)
+
+
+def poll_and_notify_handoffs() -> list[dict]:
+    """执行者拾取交接包，并在 Slack 中发送回执，验证协调者→执行者协议。"""
+    try:
+        try:
+            from devos_chat_worker.multi_agent_router import (
+                poll_handoffs,
+                set_agent_status,
+                slack_format_handoff_notification,
+            )
+        except ImportError:
+            from multi_agent_router import poll_handoffs, set_agent_status, slack_format_handoff_notification  # type: ignore
+    except Exception:
+        return []
+
+    packages = poll_handoffs()
+    notifications: list[dict] = []
+    for pkg in packages:
+        task_summary = pkg.context[:80]
+        set_agent_status("busy", task=f"handoff:{task_summary}")
+        text = slack_format_handoff_notification(pkg)
+        target = AGENT_CHANNEL or os.environ.get("SLACK_CHANNEL_ID", "")
+        if target:
+            post_to_slack(target, text)
+        notifications.append({"from": pkg.from_agent, "context": pkg.context, "text": text})
+    return notifications
 
 
 # ─────────────────────────────────────────────────────────────
@@ -851,6 +1319,7 @@ def execute_patch_preview(action_id: int, payload: dict, slack_thread_id: Option
             f"```diff\n{diff_excerpt}\n```\n\n"
             f"Original repo NOT modified. Review diff above before applying."
         )
+        response_text, artifacts = append_artifact_summary(response_text, payload)
 
         notepad_snapshot = (
             f"[patch-preview:{action_id}]\n"
@@ -866,6 +1335,7 @@ def execute_patch_preview(action_id: int, payload: dict, slack_thread_id: Option
         return "SUCCEEDED", {
             "response": response_text,
             "notepad": notepad_snapshot,
+            "artifacts": artifacts,
             # B-018: structured patch metadata for human-confirm apply
             "patchPreview": {
                 "mode": "replace",
@@ -901,6 +1371,7 @@ def execute_patch_preview(action_id: int, payload: dict, slack_thread_id: Option
         return "FAILED", {}, f"LLM call failed: {exc}"
 
     response_text = f"[PATCH_PLAN_ONLY]\n{llm_response}"
+    response_text, artifacts = append_artifact_summary(response_text, payload)
     notepad_snapshot = (
         f"[patch-plan:{action_id}]\n"
         f"file: {file_path}\n"
@@ -911,7 +1382,7 @@ def execute_patch_preview(action_id: int, payload: dict, slack_thread_id: Option
     if slack_thread_id:
         post_to_slack(slack_thread_id, response_text)
 
-    return "SUCCEEDED", {"response": response_text, "notepad": notepad_snapshot}, None
+    return "SUCCEEDED", {"response": response_text, "notepad": notepad_snapshot, "artifacts": artifacts}, None
 
 
 # ─────────────────────────────────────────────────────────────
@@ -998,6 +1469,7 @@ def execute_fix_preview(
             f"No filesystem changes were made. Review this plan and apply changes manually.\n"
             f"(Demo stub — provide real LLM keys for code-level suggestions)"
         )
+        response_text, artifacts = append_artifact_summary(response_text, payload)
         notepad_snapshot = (
             f"[fix-preview:{action_id}]\n"
             f"file: {file_path}\n"
@@ -1013,6 +1485,7 @@ def execute_fix_preview(
         return "SUCCEEDED", {
             "response": response_text,
             "notepad": notepad_snapshot,
+            "artifacts": artifacts,
             "fixPreview": {
                 "repoPath": repo_path,
                 "filePath": file_path,
@@ -1049,6 +1522,7 @@ def execute_fix_preview(
         return "FAILED", {}, f"LLM call failed: {exc}"
 
     response_text = f"[FIX_PLAN_ONLY]\n{llm_response}"
+    response_text, artifacts = append_artifact_summary(response_text, payload)
     notepad_snapshot = (
         f"[fix-preview:{action_id}]\n"
         f"file: {file_path}\n"
@@ -1065,6 +1539,7 @@ def execute_fix_preview(
     return "SUCCEEDED", {
         "response": response_text,
         "notepad": notepad_snapshot,
+        "artifacts": artifacts,
         "fixPreview": {
             "repoPath": repo_path,
             "filePath": file_path,
@@ -1107,60 +1582,124 @@ def execute(assignment: dict) -> tuple[str, dict, Optional[str]]:
         return "FAILED", {}, "user_text is empty in payload"
 
     LOGGER.info(
-        "Executing action %s type=devos_chat retry=%d slack_thread=%s notepad=%s",
-        action_id, retry_count, slack_thread_id, "present" if notepad else "none",
+        "Executing action %s type=devos_chat retry=%d slack_thread=%s notepad=%s mode=%s",
+        action_id, retry_count, slack_thread_id, "present" if notepad else "none", AGENT_MODE,
     )
 
-    # ── B-017 patch_preview routing ──────────────────────────
-    mode = payload.get("mode", "").strip().lower()
-    if mode == "patch_preview":
-        LOGGER.info("[patch-preview] routing action %s to patch preview executor", action_id)
-        # Pass notepadRef into payload so execute_patch_preview can access it
-        payload["notepadRef"] = notepad
-        return execute_patch_preview(action_id, payload, slack_thread_id)
-
-    # ── B-020 fix_preview routing ─────────────────────────────
-    if mode == "fix_preview":
-        LOGGER.info("[fix-preview] routing action %s to fix preview executor", action_id)
-        payload["notepadRef"] = notepad
-        return execute_fix_preview(action_id, payload, slack_thread_id)
-
-    # ── normal devos_chat path ────────────────────────────────
-
-    # --- L1 Thinking Loop: 构建提示词 ---
-    if notepad:
-        # Context Restore：notepad 来自 prevActionId 继承或 retry 快照，均注入提示
-        LOGGER.info("Context Restore: injecting notepad into prompt (retry=%d)", retry_count)
-
-    # --- CPU 执行：调用 LLM（notepad 若存在则始终注入，支持顺序周期恢复）---
-    # B-005: pass payload so DEMO_MODE can include page-in content in response
     try:
-        llm_response = call_llm(user_text, notepad, payload=payload)
-    except Exception as exc:
-        LOGGER.error("LLM call failed for action %s: %s", action_id, exc)
-        return "FAILED", {}, str(exc)
+        try:
+            from devos_chat_worker.multi_agent_router import set_agent_status
+        except ImportError:
+            from multi_agent_router import set_agent_status  # type: ignore
+        set_agent_status("busy", task=user_text[:120] or payload.get("mode", "action"))
+    except Exception:
+        pass
 
-    # --- 总线写传播：回写 Slack ---
-    if slack_thread_id:
-        post_to_slack(slack_thread_id, llm_response)
+    try:
+        with workspace_lock(payload, action_id) as (lock_info, workspace_key):
+            # ── B-017 patch_preview routing ──────────────────────────
+            mode = payload.get("mode", "").strip().lower()
+            if mode == "patch_preview":
+                LOGGER.info("[patch-preview] routing action %s to patch preview executor", action_id)
+                payload["notepadRef"] = notepad
+                status, result, err = execute_patch_preview(action_id, payload, slack_thread_id)
+            elif mode == "fix_preview":
+                LOGGER.info("[fix-preview] routing action %s to fix preview executor", action_id)
+                payload["notepadRef"] = notepad
+                status, result, err = execute_fix_preview(action_id, payload, slack_thread_id)
+            else:
+                if notepad:
+                    LOGGER.info("Context Restore: injecting notepad into prompt (retry=%d)", retry_count)
 
-    # --- 构建 result JSON（含 notepad 快照供下次 Context Restore）---
-    # B-005 Page Fault: if page-in was performed, record in notepad
-    repo_path = payload.get("repo_path", "").strip()
-    file_path_val = payload.get("file_path", "").strip()
-    if repo_path and file_path_val:
-        page_in_note = f"[page-in:{file_path_val}] loaded from {repo_path}"
-        notepad_snapshot = f"{page_in_note}\n[action:{action_id}] {user_text[:200]} → {llm_response[:300]}"
-    else:
-        notepad_snapshot = f"[action:{action_id}] {user_text[:200]} → {llm_response[:500]}"
+                # ── Coordinator 任务分类与自动分配 ────────────────────
+                if AGENT_MODE == "coordinator":
+                    target_role, handoff_context = coordinator_classify_and_route(user_text, payload)
+                    if target_role and handoff_context:
+                        try:
+                            from devos_chat_worker.multi_agent_router import create_handoff
+                        except ImportError:
+                            from multi_agent_router import create_handoff  # type: ignore
+                        
+                        # 生成 handoff 消息
+                        handoff_msg = create_handoff(
+                            to_agent=f"agent-{target_role}" if not target_role.startswith("agent-") else target_role,
+                            context=handoff_context,
+                            conv_id=payload.get("conversation_id", ""),
+                            notepad=notepad[:500] if notepad else ""
+                        )
+                        
+                        LOGGER.info(
+                            "[coordinator] auto-routed to %s: %s",
+                            target_role, handoff_context[:100]
+                        )
+                        
+                        # Slack 回复自动生成的 handoff 消息
+                        if slack_thread_id:
+                            post_to_slack(slack_thread_id, handoff_msg)
+                        
+                        return "SUCCEEDED", {
+                            "response": handoff_msg,
+                            "notepad": f"[auto-handoff:{action_id}] delegated to @agent-{target_role}: {handoff_context[:200]}",
+                            "integration_status": "connected",
+                            "artifacts": {},
+                        }, None
 
-    result = {
-        "response": llm_response,
-        "notepad": notepad_snapshot,
-    }
+                try:
+                    llm_response = call_llm(user_text, notepad, payload=payload)
+                except Exception as exc:
+                    LOGGER.error("LLM call failed for action %s: %s", action_id, exc)
+                    return "FAILED", {}, str(exc)
 
-    LOGGER.info("Action %s SUCCEEDED", action_id)
-    return "SUCCEEDED", result, None
+                llm_response, artifacts = append_artifact_summary(llm_response, payload)
+                integration_status = resolve_integration_status(llm_response)
+                llm_response = append_integration_footer(llm_response, integration_status)
+
+                if slack_thread_id:
+                    post_to_slack(slack_thread_id, llm_response)
+
+                repo_path = payload.get("repo_path", "").strip()
+                file_path_val = payload.get("file_path", "").strip()
+                if repo_path and file_path_val:
+                    page_in_note = f"[page-in:{file_path_val}] loaded from {repo_path}"
+                    notepad_snapshot = f"{page_in_note}\n[action:{action_id}] {user_text[:200]} → {llm_response[:300]}"
+                else:
+                    notepad_snapshot = f"[action:{action_id}] {user_text[:200]} → {llm_response[:500]}"
+
+                status = "SUCCEEDED"
+                err = None
+                result = {
+                    "response": llm_response,
+                    "notepad": notepad_snapshot,
+                    "integration_status": integration_status,
+                    "artifacts": artifacts,
+                }
+
+            if workspace_key:
+                result.setdefault("workspaceLock", {})
+                result["workspaceLock"].update({
+                    "workspaceKey": workspace_key,
+                    "owner": (lock_info.get("metadata") or {}).get("owner", f"action:{action_id}"),
+                })
+
+            LOGGER.info("Action %s %s", action_id, status)
+            return status, result, err
+    except WorkspaceLockTimeout as exc:
+        busy_reply = f"⏳ Workspace busy: {exc}. Try again after the active agent finishes."
+        if slack_thread_id:
+            post_to_slack(slack_thread_id, busy_reply)
+        return "FAILED", {
+            "response": busy_reply,
+            "workspaceLock": {"workspaceKey": _workspace_key_from_payload(payload)},
+        }, str(exc)
+    finally:
+        try:
+            try:
+                from devos_chat_worker.multi_agent_router import set_agent_status
+            except ImportError:
+                from multi_agent_router import set_agent_status  # type: ignore
+            set_agent_status("idle", task="")
+        except Exception:
+            pass
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1192,6 +1731,8 @@ def main() -> None:
         if now >= next_heartbeat_at:
             heartbeat()
             next_heartbeat_at = now + HEARTBEAT_INTERVAL_S
+
+        poll_and_notify_handoffs()
 
         assignment = poll_action()
         if assignment is None:

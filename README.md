@@ -10,6 +10,9 @@
 ## Quickstart
 
 ```bash
+# 0. One-command release gate (recommended)
+bash scripts/run_release_gate.sh
+
 # 1. Run all Java tests (H2 in-memory, no Docker)
 mvn test -Dspring.profiles.active=local
 
@@ -29,6 +32,9 @@ bash scripts/run_production_config_check.sh
 
 # 6. Secret scan
 bash scripts/secret_scan.sh
+
+# 7. Full gate with E2E (requires Redis on localhost:6379)
+bash scripts/run_release_gate.sh --with-e2e
 ```
 
 ## What this is

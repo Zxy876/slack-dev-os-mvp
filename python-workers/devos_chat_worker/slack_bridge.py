@@ -67,6 +67,43 @@ INTENT_NEEDS_CONFIRMATION = "needs_confirmation"
 INTENT_NEEDS_CONTEXT     = "needs_context"
 INTENT_CONFIG_ERROR      = "config_error"
 
+# ── OpenHands 完整映射新增意图 ─────────────────────────────
+INTENT_LIST_CONVS        = "list_conversations"
+INTENT_SEARCH_CONVS      = "search_conversations"
+INTENT_DELETE_CONV       = "delete_conversation"
+INTENT_RENAME_CONV       = "rename_conversation"
+INTENT_HISTORY           = "history"
+INTENT_SEARCH_EVENTS     = "search_events"
+INTENT_FILES             = "files"
+INTENT_READ_FILE         = "read_file"
+INTENT_SKILLS            = "skills"
+INTENT_MY_SKILLS         = "my_skills"
+INTENT_REPOS             = "repos"
+INTENT_BRANCHES          = "branches"
+INTENT_SUGGEST           = "suggest"
+INTENT_SANDBOX_LIST      = "sandbox_list"
+INTENT_SANDBOX_PAUSE     = "sandbox_pause"
+INTENT_SANDBOX_RESUME    = "sandbox_resume"
+INTENT_SANDBOX_DELETE    = "sandbox_delete"
+INTENT_SETTINGS          = "settings"
+INTENT_MODELS            = "models"
+INTENT_PROFILES          = "profiles"
+INTENT_PROFILE_USE       = "profile_use"
+INTENT_SECRETS           = "secrets"
+INTENT_SECRET_DELETE     = "secret_delete"
+INTENT_STATUS            = "status"
+INTENT_SERVER_INFO       = "server_info"
+INTENT_WHOAMI            = "whoami"
+INTENT_GIT_INFO          = "git_info"
+INTENT_SEND_MSG          = "send_message"
+INTENT_HELP              = "help"
+
+# ── 多 agent 协作意图 ──────────────────────────────────────
+INTENT_AGENTS            = "agents"
+INTENT_BROADCAST         = "broadcast"
+INTENT_HANDOFF           = "handoff"
+INTENT_ROLES             = "roles"
+
 
 @dataclass
 class DevosIntent:
@@ -112,6 +149,39 @@ _RE_FIX = re.compile(r'^fix\s+(\S+)', re.IGNORECASE)
 _RE_COMMIT = re.compile(r'^commit\s+"([^"]+)"(\s+confirm)?\s*$', re.IGNORECASE)
 # ask <instruction…>
 _RE_ASK = re.compile(r'^ask\s+(.+)$', re.IGNORECASE)
+
+# ── 新意图 Regex ────────────────────────────────────────────
+# list / search / delete / rename conversations
+_RE_SEARCH_CONVS = re.compile(r'^search\s+(.+)$', re.IGNORECASE)
+_RE_DELETE_CONV  = re.compile(r'^delete\s+(\S+)(\s+confirm)?\s*$', re.IGNORECASE)
+_RE_RENAME_CONV  = re.compile(r'^rename\s+(\S+)\s+(.+)$', re.IGNORECASE)
+# history / events
+_RE_HISTORY      = re.compile(r'^history\s+(\S+)$', re.IGNORECASE)
+_RE_SEARCH_EVTS  = re.compile(r'^search-events\s+(\S+)\s+(.+)$', re.IGNORECASE)
+# files / read
+_RE_FILES        = re.compile(r'^files\s+(\S+)(?:\s+(.+))?$', re.IGNORECASE)
+_RE_READ_FILE    = re.compile(r'^read\s+(\S+)\s+(\S+)$', re.IGNORECASE)
+# skills
+_RE_SKILLS       = re.compile(r'^skills\s+(\S+)$', re.IGNORECASE)
+# git
+_RE_REPOS        = re.compile(r'^repos(?:\s+(.+))?$', re.IGNORECASE)
+_RE_BRANCHES     = re.compile(r'^branches\s+(\S+)$', re.IGNORECASE)
+_RE_SUGGEST      = re.compile(r'^suggest\s+(\S+)(?:\s+(\S+))?$', re.IGNORECASE)
+# sandbox
+_RE_SANDBOX_PAUSE   = re.compile(r'^sandbox\s+pause\s+(\S+)$', re.IGNORECASE)
+_RE_SANDBOX_RESUME  = re.compile(r'^sandbox\s+resume\s+(\S+)$', re.IGNORECASE)
+_RE_SANDBOX_DELETE  = re.compile(r'^sandbox\s+delete\s+(\S+)(\s+confirm)?\s*$', re.IGNORECASE)
+# profile
+_RE_PROFILE_USE  = re.compile(r'^profile\s+use\s+(\S+)$', re.IGNORECASE)
+# secret delete
+_RE_SECRET_DEL   = re.compile(r'^secret\s+delete\s+(\S+)(\s+confirm)?\s*$', re.IGNORECASE)
+# send message to conversation
+_RE_SEND_MSG     = re.compile(r'^send\s+(\S+)\s+(.+)$', re.IGNORECASE)
+# handoff @agent-<name> <context>
+_RE_HANDOFF      = re.compile(r'^handoff\s+@(agent-[\w\-]+)\s+(.+)$', re.IGNORECASE)
+# broadcast <message>
+_RE_BROADCAST    = re.compile(r'^broadcast\s+(.+)$', re.IGNORECASE)
+
 
 def _base_url() -> str:
     return os.environ.get("ASYNCAIFLOW_URL", "http://localhost:8080").rstrip("/")
@@ -353,8 +423,351 @@ def parse_devos_intent(
 
 
 # ─────────────────────────────────────────────────────────────
-# HTTP helpers
+# 新意图解析（OpenHands 完整映射 + 多 agent 超集）
 # ─────────────────────────────────────────────────────────────
+
+def parse_extended_intent(instruction: str) -> Optional[DevosIntent]:
+    """
+    解析 OpenHands 完整映射和多 agent 意图。
+    返回 DevosIntent（kind 为新意图常量），或 None（表示不匹配）。
+    handle_slack_event 在调用 parse_devos_intent 之前先尝试此函数。
+    """
+    stripped = instruction.strip()
+    low = stripped.lower()
+
+    # ── 帮助 ────────────────────────────────────────────────
+    if low in ("help", "?", "帮助"):
+        return DevosIntent(kind=INTENT_HELP, endpoint="", instruction=instruction)
+
+    # ── 对话管理 ─────────────────────────────────────────────
+    if low == "list":
+        return DevosIntent(kind=INTENT_LIST_CONVS, endpoint="", instruction=instruction)
+
+    m = _RE_SEARCH_CONVS.match(stripped)
+    if m and low.startswith("search "):
+        return DevosIntent(
+            kind=INTENT_SEARCH_CONVS, endpoint="",
+            payload={"query": m.group(1)}, instruction=instruction,
+        )
+
+    m = _RE_DELETE_CONV.match(stripped)
+    if m and low.startswith("delete "):
+        confirmed = bool(m.group(2))
+        if not confirmed:
+            return DevosIntent(
+                kind=INTENT_NEEDS_CONFIRMATION, endpoint="",
+                reason=f"删除对话 `{m.group(1)}` 是不可逆操作。\n"
+                       f"请重发：`devos: delete {m.group(1)} confirm`",
+            )
+        return DevosIntent(
+            kind=INTENT_DELETE_CONV, endpoint="",
+            payload={"conv_id": m.group(1)}, dangerous=True, instruction=instruction,
+        )
+
+    m = _RE_RENAME_CONV.match(stripped)
+    if m and low.startswith("rename "):
+        return DevosIntent(
+            kind=INTENT_RENAME_CONV, endpoint="",
+            payload={"conv_id": m.group(1), "title": m.group(2)}, instruction=instruction,
+        )
+
+    # ── 事件 / 历史 ───────────────────────────────────────────
+    m = _RE_HISTORY.match(stripped)
+    if m and low.startswith("history "):
+        return DevosIntent(
+            kind=INTENT_HISTORY, endpoint="",
+            payload={"conv_id": m.group(1)}, instruction=instruction,
+        )
+
+    m = _RE_SEARCH_EVTS.match(stripped)
+    if m and low.startswith("search-events "):
+        return DevosIntent(
+            kind=INTENT_SEARCH_EVENTS, endpoint="",
+            payload={"conv_id": m.group(1), "query": m.group(2)}, instruction=instruction,
+        )
+
+    # ── 文件 ─────────────────────────────────────────────────
+    m = _RE_FILES.match(stripped)
+    if m and low.startswith("files "):
+        return DevosIntent(
+            kind=INTENT_FILES, endpoint="",
+            payload={"conv_id": m.group(1), "path": m.group(2) or "/"}, instruction=instruction,
+        )
+
+    m = _RE_READ_FILE.match(stripped)
+    if m and low.startswith("read "):
+        return DevosIntent(
+            kind=INTENT_READ_FILE, endpoint="",
+            payload={"conv_id": m.group(1), "path": m.group(2)}, instruction=instruction,
+        )
+
+    # ── Skills ───────────────────────────────────────────────
+    m = _RE_SKILLS.match(stripped)
+    if m and low.startswith("skills "):
+        return DevosIntent(
+            kind=INTENT_SKILLS, endpoint="",
+            payload={"conv_id": m.group(1)}, instruction=instruction,
+        )
+
+    if low == "my-skills":
+        return DevosIntent(kind=INTENT_MY_SKILLS, endpoint="", instruction=instruction)
+
+    # ── Git ───────────────────────────────────────────────────
+    m = _RE_REPOS.match(stripped)
+    if m and low.startswith("repos"):
+        return DevosIntent(
+            kind=INTENT_REPOS, endpoint="",
+            payload={"query": m.group(1) or ""}, instruction=instruction,
+        )
+
+    m = _RE_BRANCHES.match(stripped)
+    if m and low.startswith("branches "):
+        return DevosIntent(
+            kind=INTENT_BRANCHES, endpoint="",
+            payload={"repo": m.group(1)}, instruction=instruction,
+        )
+
+    m = _RE_SUGGEST.match(stripped)
+    if m and low.startswith("suggest "):
+        return DevosIntent(
+            kind=INTENT_SUGGEST, endpoint="",
+            payload={"repo": m.group(1), "branch": m.group(2) or ""}, instruction=instruction,
+        )
+
+    # ── 沙盒 ─────────────────────────────────────────────────
+    if low == "sandbox list":
+        return DevosIntent(kind=INTENT_SANDBOX_LIST, endpoint="", instruction=instruction)
+
+    m = _RE_SANDBOX_PAUSE.match(stripped)
+    if m:
+        return DevosIntent(
+            kind=INTENT_SANDBOX_PAUSE, endpoint="",
+            payload={"sandbox_id": m.group(1)}, instruction=instruction,
+        )
+
+    m = _RE_SANDBOX_RESUME.match(stripped)
+    if m:
+        return DevosIntent(
+            kind=INTENT_SANDBOX_RESUME, endpoint="",
+            payload={"sandbox_id": m.group(1)}, instruction=instruction,
+        )
+
+    m = _RE_SANDBOX_DELETE.match(stripped)
+    if m and low.startswith("sandbox delete"):
+        confirmed = bool(m.group(2))
+        if not confirmed:
+            return DevosIntent(
+                kind=INTENT_NEEDS_CONFIRMATION, endpoint="",
+                reason=f"删除沙盒 `{m.group(1)}` 是不可逆操作。\n"
+                       f"请重发：`devos: sandbox delete {m.group(1)} confirm`",
+            )
+        return DevosIntent(
+            kind=INTENT_SANDBOX_DELETE, endpoint="",
+            payload={"sandbox_id": m.group(1)}, dangerous=True, instruction=instruction,
+        )
+
+    # ── Settings / LLM ────────────────────────────────────────
+    if low == "settings":
+        return DevosIntent(kind=INTENT_SETTINGS, endpoint="", instruction=instruction)
+
+    if low.startswith("models"):
+        query = stripped[6:].strip()
+        return DevosIntent(
+            kind=INTENT_MODELS, endpoint="",
+            payload={"query": query}, instruction=instruction,
+        )
+
+    if low == "profiles":
+        return DevosIntent(kind=INTENT_PROFILES, endpoint="", instruction=instruction)
+
+    m = _RE_PROFILE_USE.match(stripped)
+    if m:
+        return DevosIntent(
+            kind=INTENT_PROFILE_USE, endpoint="",
+            payload={"name": m.group(1)}, instruction=instruction,
+        )
+
+    # ── Secrets ───────────────────────────────────────────────
+    if low == "secrets":
+        return DevosIntent(kind=INTENT_SECRETS, endpoint="", instruction=instruction)
+
+    m = _RE_SECRET_DEL.match(stripped)
+    if m and low.startswith("secret delete"):
+        confirmed = bool(m.group(2))
+        if not confirmed:
+            return DevosIntent(
+                kind=INTENT_NEEDS_CONFIRMATION, endpoint="",
+                reason=f"删除 Secret `{m.group(1)}` 是不可逆操作。\n"
+                       f"请重发：`devos: secret delete {m.group(1)} confirm`",
+            )
+        return DevosIntent(
+            kind=INTENT_SECRET_DELETE, endpoint="",
+            payload={"secret_id": m.group(1)}, dangerous=True, instruction=instruction,
+        )
+
+    # ── 状态 / 用户 ────────────────────────────────────────────
+    if low == "status":
+        return DevosIntent(kind=INTENT_STATUS, endpoint="", instruction=instruction)
+
+    if low == "server-info":
+        return DevosIntent(kind=INTENT_SERVER_INFO, endpoint="", instruction=instruction)
+
+    if low == "whoami":
+        return DevosIntent(kind=INTENT_WHOAMI, endpoint="", instruction=instruction)
+
+    if low == "git-info":
+        return DevosIntent(kind=INTENT_GIT_INFO, endpoint="", instruction=instruction)
+
+    # ── 向对话发消息 ───────────────────────────────────────────
+    m = _RE_SEND_MSG.match(stripped)
+    if m and low.startswith("send "):
+        return DevosIntent(
+            kind=INTENT_SEND_MSG, endpoint="",
+            payload={"conv_id": m.group(1), "message": m.group(2)}, instruction=instruction,
+        )
+
+    # ── 多 agent 协作 ─────────────────────────────────────────
+    if low == "agents":
+        return DevosIntent(kind=INTENT_AGENTS, endpoint="", instruction=instruction)
+
+    if low == "roles":
+        return DevosIntent(kind=INTENT_ROLES, endpoint="", instruction=instruction)
+
+    m = _RE_BROADCAST.match(stripped)
+    if m and low.startswith("broadcast "):
+        return DevosIntent(
+            kind=INTENT_BROADCAST, endpoint="",
+            payload={"message": m.group(1)}, instruction=instruction,
+        )
+
+    m = _RE_HANDOFF.match(stripped)
+    if m and low.startswith("handoff "):
+        return DevosIntent(
+            kind=INTENT_HANDOFF, endpoint="",
+            payload={"to_agent": m.group(1), "context": m.group(2)},
+            instruction=instruction,
+        )
+
+    return None  # 不匹配任何新意图
+
+
+def dispatch_extended_intent(intent: DevosIntent) -> str:
+    """
+    执行扩展意图，直接调用 openhands_slack_mapper / multi_agent_router，
+    返回 Slack 回帖文本。
+    """
+    # 延迟导入，避免循环依赖
+    try:
+        from devos_chat_worker import openhands_slack_mapper as mapper
+        from devos_chat_worker import multi_agent_router as mar
+    except ImportError:
+        import openhands_slack_mapper as mapper  # type: ignore
+        import multi_agent_router as mar  # type: ignore
+
+    p = intent.payload
+    k = intent.kind
+
+    try:
+        if k == INTENT_HELP:
+            return mapper.slack_help()
+
+        # 对话管理
+        if k == INTENT_LIST_CONVS:
+            return mapper.slack_list_conversations()
+        if k == INTENT_SEARCH_CONVS:
+            return mapper.slack_search_conversations(p["query"])
+        if k == INTENT_DELETE_CONV:
+            return mapper.slack_delete_conversation(p["conv_id"])
+        if k == INTENT_RENAME_CONV:
+            return mapper.slack_rename_conversation(p["conv_id"], p["title"])
+
+        # 历史
+        if k == INTENT_HISTORY:
+            return mapper.slack_conversation_history(p["conv_id"])
+        if k == INTENT_SEARCH_EVENTS:
+            return mapper.slack_search_events(p["conv_id"], p["query"])
+
+        # 文件
+        if k == INTENT_FILES:
+            return mapper.slack_list_files(p["conv_id"], p.get("path", "/"))
+        if k == INTENT_READ_FILE:
+            return mapper.slack_read_file(p["conv_id"], p["path"])
+
+        # Skills
+        if k == INTENT_SKILLS:
+            return mapper.slack_list_skills(p["conv_id"])
+        if k == INTENT_MY_SKILLS:
+            return mapper.slack_list_user_skills()
+
+        # Git
+        if k == INTENT_REPOS:
+            return mapper.slack_list_repos(p.get("query", ""))
+        if k == INTENT_BRANCHES:
+            return mapper.slack_list_branches(p["repo"])
+        if k == INTENT_SUGGEST:
+            return mapper.slack_suggested_tasks(p["repo"], p.get("branch", ""))
+
+        # 沙盒
+        if k == INTENT_SANDBOX_LIST:
+            return mapper.slack_list_sandboxes()
+        if k == INTENT_SANDBOX_PAUSE:
+            return mapper.slack_pause_sandbox(p["sandbox_id"])
+        if k == INTENT_SANDBOX_RESUME:
+            return mapper.slack_resume_sandbox(p["sandbox_id"])
+        if k == INTENT_SANDBOX_DELETE:
+            return mapper.slack_delete_sandbox(p["sandbox_id"])
+
+        # Settings
+        if k == INTENT_SETTINGS:
+            return mapper.slack_get_settings()
+        if k == INTENT_MODELS:
+            return mapper.slack_list_models(p.get("query", ""))
+        if k == INTENT_PROFILES:
+            return mapper.slack_list_profiles()
+        if k == INTENT_PROFILE_USE:
+            return mapper.slack_activate_profile(p["name"])
+
+        # Secrets
+        if k == INTENT_SECRETS:
+            return mapper.slack_list_secrets()
+        if k == INTENT_SECRET_DELETE:
+            return mapper.slack_delete_secret(p["secret_id"])
+
+        # 状态
+        if k == INTENT_STATUS:
+            return mapper.slack_openhands_status()
+        if k == INTENT_SERVER_INFO:
+            return mapper.slack_server_info()
+        if k == INTENT_WHOAMI:
+            return mapper.slack_whoami()
+        if k == INTENT_GIT_INFO:
+            return mapper.slack_git_info()
+
+        # 消息
+        if k == INTENT_SEND_MSG:
+            return mapper.slack_send_message_to_conversation(p["conv_id"], p["message"])
+
+        # 多 agent
+        if k == INTENT_AGENTS:
+            return mar.slack_list_agents()
+        if k == INTENT_ROLES:
+            return mar.slack_list_roles()
+        if k == INTENT_BROADCAST:
+            return mar.slack_broadcast_message(p["message"])
+        if k == INTENT_HANDOFF:
+            return mar.create_handoff(
+                to_agent=p["to_agent"],
+                context=p["context"],
+            )
+
+    except Exception as exc:
+        LOGGER.warning("dispatch_extended_intent %s failed: %s", k, exc)
+        return f"⚠️ 执行 `{k}` 失败: {exc}"
+
+    return f"⚠️ 未知扩展意图: `{k}`"
+
+
+
 
 def _make_session() -> requests.Session:
     sess = requests.Session()
@@ -564,6 +977,62 @@ def handle_slack_event(
 
     # ── 3. Build slackThreadId ─────────────────────────────────
     slack_thread_id = build_slack_thread_id(event)
+
+    # ── 3.5 扩展意图（OpenHands 完整映射 + 多 agent 超集）──────
+    ext_intent = parse_extended_intent(instruction)
+    if ext_intent is not None:
+        # NEEDS_CONFIRMATION 类短路
+        if ext_intent.kind == INTENT_NEEDS_CONFIRMATION:
+            return {
+                "handled": True,
+                "reason": "needs_confirmation",
+                "slackThreadId": slack_thread_id,
+                "actionId": None,
+                "replyText": ext_intent.reason,
+                "intent": {
+                    "kind": ext_intent.kind,
+                    "endpoint": "",
+                    "payload": ext_intent.payload,
+                    "dangerous": ext_intent.dangerous,
+                    "needs_confirmation": True,
+                    "reason": ext_intent.reason,
+                },
+            }
+        # 干运行
+        if dry_run:
+            return {
+                "handled": True,
+                "reason": "dry-run mode",
+                "slackThreadId": slack_thread_id,
+                "actionId": None,
+                "replyText": f"[DRY RUN] intent={ext_intent.kind} payload={ext_intent.payload}",
+                "intent": {
+                    "kind": ext_intent.kind,
+                    "endpoint": ext_intent.endpoint,
+                    "payload": ext_intent.payload,
+                    "dangerous": ext_intent.dangerous,
+                    "needs_confirmation": False,
+                    "reason": "",
+                },
+            }
+        # 执行扩展意图
+        reply = dispatch_extended_intent(ext_intent)
+        LOGGER.info("extended intent %s dispatched for thread %s", ext_intent.kind, slack_thread_id)
+        return {
+            "handled": True,
+            "reason": f"{ext_intent.kind} dispatched",
+            "slackThreadId": slack_thread_id,
+            "actionId": None,
+            "replyText": reply,
+            "intent": {
+                "kind": ext_intent.kind,
+                "endpoint": ext_intent.endpoint,
+                "payload": ext_intent.payload,
+                "dangerous": ext_intent.dangerous,
+                "needs_confirmation": False,
+                "reason": "",
+            },
+        }
 
     # ── 4. Parse intent (B-022) ────────────────────────────────
     intent = parse_devos_intent(instruction, slack_thread_id, repo_path=repo_path)

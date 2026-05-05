@@ -251,6 +251,47 @@ class TestHandleSocketModeRequestDispatch:
 
         assert captured_config.get("dry_run") is True
 
+    def test_e_explicit_agent_route_strips_mention_before_bridge(self):
+        client = _make_client()
+        req = self._make_message_request("@agent-alpha devos: ask hello")
+
+        outcome = {
+            "handled": False,
+            "reason": "dry-run",
+            "slackThreadId": "C/1",
+            "actionId": None,
+            "replyText": "",
+            "intent": {},
+        }
+
+        with patch.dict(os.environ, {"AGENT_NAME": "agent-alpha", "AGENT_MODE": "executor"}):
+            with patch.object(socket_mode_adapter, "handle_slack_event", return_value=outcome) as mock_bridge:
+                handle_socket_mode_request(client, req, config={"dry_run": True})
+
+        mock_bridge.assert_called_once()
+        event_arg = mock_bridge.call_args[0][0]
+        assert event_arg["text"] == "devos: ask hello"
+
+    def test_e_explicit_route_to_other_agent_is_ignored(self):
+        client = _make_client()
+        req = self._make_message_request("@agent-beta devos: ask hello")
+
+        with patch.dict(os.environ, {"AGENT_NAME": "agent-alpha", "AGENT_MODE": "executor"}):
+            with patch.object(socket_mode_adapter, "handle_slack_event") as mock_bridge:
+                handle_socket_mode_request(client, req, config={"dry_run": True})
+
+        mock_bridge.assert_not_called()
+
+    def test_e_executor_ignores_unmentioned_message(self):
+        client = _make_client()
+        req = self._make_message_request("devos: ask hello")
+
+        with patch.dict(os.environ, {"AGENT_NAME": "agent-beta", "AGENT_MODE": "executor"}):
+            with patch.object(socket_mode_adapter, "handle_slack_event") as mock_bridge:
+                handle_socket_mode_request(client, req, config={"dry_run": True})
+
+        mock_bridge.assert_not_called()
+
 
 # ─────────────────────────────────────────────────────────────
 # F — handled=True + replyText → post_to_slack called

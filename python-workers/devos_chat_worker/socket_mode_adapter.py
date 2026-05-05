@@ -38,6 +38,11 @@ from slack_sdk.socket_mode import SocketModeClient
 from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
 
+try:
+    from devos_chat_worker.multi_agent_router import route_incoming_text
+except ImportError:
+    from multi_agent_router import route_incoming_text  # type: ignore
+
 from slack_bridge import handle_slack_event
 from worker import post_to_slack
 
@@ -158,6 +163,17 @@ def handle_socket_mode_request(
                                       os.environ.get("DEVOS_SOCKET_DRY_RUN", "false").lower()
                                       in ("1", "true", "yes")),
     }
+
+    # ── Multi-agent precise routing ──────────────────────────
+    text = event.get("text", "") or ""
+    should_process, routed_text, route_reason = route_incoming_text(text)
+    if not should_process:
+        LOGGER.debug("Skipped event due to multi-agent routing: %s", route_reason)
+        return
+    if routed_text != text:
+        event = dict(event)
+        event["text"] = routed_text
+        LOGGER.info("Routed Slack event to current agent: %s", route_reason)
 
     # ── Dispatch to bridge ────────────────────────────────────
     try:
